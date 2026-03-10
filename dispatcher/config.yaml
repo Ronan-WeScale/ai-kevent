@@ -1,0 +1,39 @@
+service:
+  type: "${SERVICE_TYPE}"
+  result_topic: ""    # auto-dérivé: "jobs.{type}.results" si vide
+  # Pas de max_concurrency : géré par containerConcurrency dans le Knative Service spec.
+
+kafka:
+  brokers: ["${KAFKA_BROKERS:-kafka:9092}"]
+
+s3:
+  endpoint:   "${S3_ENDPOINT:-https://s3.fr-par.scw.cloud}"
+  region:     "${S3_REGION:-fr-par}"
+  access_key: "${S3_ACCESS_KEY}"
+  secret_key: "${S3_SECRET_KEY}"
+  bucket:     "${S3_BUCKET:-kevent-jobs}"
+
+# Les endpoints pointent vers le container d'inférence local (sidecar dans le même pod).
+# INFERENCE_PORT est le port du serveur de modèle dans le pod.
+transcription:
+  endpoint_url:    "http://127.0.0.1:${INFERENCE_PORT:-9000}/v1/audio/transcriptions"
+  model:           "whisper-large-v3"
+  language:        ""
+  response_format: "json"
+  api_key:         ""      # pas d'auth sur localhost
+  timeout:         "300s"
+
+diarization:
+  endpoint_url: "http://127.0.0.1:${INFERENCE_PORT:-9000}/v1/audio/diarizations"
+  model:        "pyannote-audio-3.1"
+  num_speakers: 0          # 0 = auto-detect
+  api_key:      ""
+  timeout:      "600s"
+
+ocr:
+  endpoint_url: "http://127.0.0.1:${INFERENCE_PORT:-9000}/v1/chat/completions"
+  model:        "llava-v1.6-mistral-7b"
+  prompt:       "Extract all text visible in this document. Return only the extracted text."
+  max_tokens:   4096
+  api_key:      ""
+  timeout:      "120s"

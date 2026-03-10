@@ -1,0 +1,5 @@
+values.yaml
+.claude/**
+**/charts/**
+**/Chart.lock
+**/k8s/**

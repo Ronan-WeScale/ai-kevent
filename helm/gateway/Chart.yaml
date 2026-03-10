@@ -1,0 +1,11 @@
+apiVersion: v2
+name: kevent-gateway
+description: API gateway for kevent inference jobs
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+
+dependencies:
+  - name: redis-ha
+    version: "4.35.10"
+    repository: "https://dandydeveloper.github.io/charts"
