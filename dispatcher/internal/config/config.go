@@ -25,7 +25,20 @@ type ServiceConfig struct {
 }
 
 type KafkaConfig struct {
-	Brokers []string `yaml:"brokers"`
+	Brokers []string   `yaml:"brokers"`
+	SASL    SASLConfig `yaml:"sasl"`
+	TLS     TLSConfig  `yaml:"tls"`
+}
+
+type SASLConfig struct {
+	Mechanism string `yaml:"mechanism"` // PLAIN | SCRAM-SHA-256 | SCRAM-SHA-512
+	Username  string `yaml:"username"`
+	Password  string `yaml:"password"`
+}
+
+type TLSConfig struct {
+	Enabled    bool   `yaml:"enabled"`
+	CACertPath string `yaml:"ca_cert_path"`
 }
 
 // S3Config holds S3-compatible object storage credentials and settings.

@@ -26,6 +26,7 @@ const (
 // It updates job state in Redis and optionally sends webhook notifications.
 type ConsumerManager struct {
 	cfg        config.KafkaConfig
+	dialer     *kafkago.Dialer
 	registry   *service.Registry
 	redis      *storage.RedisClient
 	s3         *storage.S3Client
@@ -39,9 +40,14 @@ func NewConsumerManager(
 	redis *storage.RedisClient,
 	s3 *storage.S3Client,
 	logger *slog.Logger,
-) *ConsumerManager {
+) (*ConsumerManager, error) {
+	dialer, err := buildDialer(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("building kafka dialer: %w", err)
+	}
 	return &ConsumerManager{
 		cfg:      cfg,
+		dialer:   dialer,
 		registry: registry,
 		redis:    redis,
 		s3:       s3,
@@ -49,7 +55,7 @@ func NewConsumerManager(
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},
-	}
+	}, nil
 }
 
 // Start launches one goroutine per registered service's result topic.
@@ -70,6 +76,7 @@ func (cm *ConsumerManager) consume(ctx context.Context, topic, serviceType strin
 		Brokers:  cm.cfg.Brokers,
 		Topic:    topic,
 		GroupID:  groupID,
+		Dialer:   cm.dialer,
 		MinBytes: 1,
 		MaxBytes: 10e6, // 10 MB
 		// LastOffset: for a new consumer group, start from the tail.

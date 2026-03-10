@@ -46,7 +46,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	publisher := kafka.NewPublisher(cfg.Kafka)
+	publisher, err := kafka.NewPublisher(cfg.Kafka)
+	if err != nil {
+		slog.Error("failed to initialise Kafka publisher", "error", err)
+		os.Exit(1)
+	}
 	defer publisher.Close()
 
 	adp, err := adapter.New(cfg)

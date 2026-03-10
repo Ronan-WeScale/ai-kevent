@@ -15,16 +15,22 @@ import (
 // Producer manages one kafka-go Writer per topic, created lazily on first use.
 // Writers are thread-safe; the internal map is protected by a mutex.
 type Producer struct {
-	brokers []string
-	mu      sync.Mutex
-	writers map[string]*kafkago.Writer
+	brokers   []string
+	transport *kafkago.Transport
+	mu        sync.Mutex
+	writers   map[string]*kafkago.Writer
 }
 
-func NewProducer(cfg config.KafkaConfig) *Producer {
-	return &Producer{
-		brokers: cfg.Brokers,
-		writers: make(map[string]*kafkago.Writer),
+func NewProducer(cfg config.KafkaConfig) (*Producer, error) {
+	transport, err := buildTransport(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("building kafka transport: %w", err)
 	}
+	return &Producer{
+		brokers:   cfg.Brokers,
+		transport: transport,
+		writers:   make(map[string]*kafkago.Writer),
+	}, nil
 }
 
 // writerFor returns an existing writer or creates a new one for the topic.
@@ -44,6 +50,7 @@ func (p *Producer) writerFor(topic string) *kafkago.Writer {
 		Balancer:               &kafkago.Hash{},
 		RequiredAcks:           kafkago.RequireOne,
 		AllowAutoTopicCreation: false, // topics must be pre-created by the operator
+		Transport:              p.transport,
 	}
 	p.writers[topic] = w
 	return w

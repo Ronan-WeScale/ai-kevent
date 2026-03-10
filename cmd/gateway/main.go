@@ -56,7 +56,11 @@ func main() {
 	}
 	defer redisClient.Close()
 
-	producer := kafka.NewProducer(cfg.Kafka)
+	producer, err := kafka.NewProducer(cfg.Kafka)
+	if err != nil {
+		slog.Error("failed to initialise Kafka producer", "error", err)
+		os.Exit(1)
+	}
 	defer producer.Close()
 
 	// ── HTTP router ───────────────────────────────────────────────────────────
@@ -69,6 +73,8 @@ func main() {
 	r.Use(chimw.Recoverer)
 
 	r.Get("/health", handler.Health)
+	r.Get("/docs", handler.DocsUI)
+	r.Get("/openapi.yaml", handler.DocsSpec)
 	r.Post("/jobs", jobHandler.Submit)
 	r.Get("/jobs/{id}", jobHandler.GetStatus)
 
@@ -86,7 +92,11 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	consumerManager := kafka.NewConsumerManager(cfg.Kafka, registry, redisClient, s3Client, logger)
+	consumerManager, err := kafka.NewConsumerManager(cfg.Kafka, registry, redisClient, s3Client, logger)
+	if err != nil {
+		slog.Error("failed to initialise Kafka consumer manager", "error", err)
+		os.Exit(1)
+	}
 	consumerManager.Start(ctx)
 
 	// ── HTTP server ───────────────────────────────────────────────────────────
