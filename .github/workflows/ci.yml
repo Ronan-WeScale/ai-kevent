@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test-gateway:
+    name: Gateway — test & vet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go vet ./...
+      - run: go test ./...
+
+  test-dispatcher:
+    name: Dispatcher — test & vet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: dispatcher/go.mod
+          cache: true
+          cache-dependency-path: dispatcher/go.sum
+      - working-directory: dispatcher
+        run: go vet ./...
+      - working-directory: dispatcher
+        run: go test ./...
+
+  lint-helm:
+    name: Helm — lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - run: helm dependency update ./helm/gateway
+      - run: helm lint ./helm/gateway

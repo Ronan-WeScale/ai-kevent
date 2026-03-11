@@ -78,3 +78,15 @@ Utilise le Secret existant si spécifié, sinon celui créé par ce chart.
 {{- printf "%s-kafka" (include "kevent-gateway.fullname" .) -}}
 {{- end -}}
 {{- end }}
+
+{{/*
+Nom du Secret contenant la clé de chiffrement AES-256-GCM.
+Utilise le Secret existant si spécifié, sinon celui créé par ce chart.
+*/}}
+{{- define "kevent-gateway.encryptionSecretName" -}}
+{{- if .Values.encryption.existingSecret -}}
+{{- .Values.encryption.existingSecret -}}
+{{- else -}}
+{{- printf "%s-encryption" (include "kevent-gateway.fullname" .) -}}
+{{- end -}}
+{{- end }}

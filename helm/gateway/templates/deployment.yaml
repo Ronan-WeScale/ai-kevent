@@ -52,11 +52,11 @@ spec:
                   name: {{ include "kevent-gateway.kafkaSecretName" . }}
                   key: KAFKA_SASL_PASSWORD
             {{- end }}
-            {{- if .Values.encryption.key }}
+            {{- if or .Values.encryption.key .Values.encryption.existingSecret }}
             - name: ENCRYPTION_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "kevent-gateway.fullname" . }}-encryption
+                  name: {{ include "kevent-gateway.encryptionSecretName" . }}
                   key: ENCRYPTION_KEY
             {{- end }}
           volumeMounts:

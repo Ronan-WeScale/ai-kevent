@@ -25,26 +25,28 @@ go vet ./...
 go test ./...
 ```
 
-### Docker images
+### Docker images & releases
 
-Images must be rebuilt and pushed after any code change, then tags updated in `values.yaml` and `k8s/inference-transcription.yaml`:
+Images are hosted on **ghcr.io** and released via GitHub Actions. To release:
 
 ```bash
-# Gateway  →  tcheksa62/kevent:<tag>
-docker build -t tcheksa62/kevent:vX.Y.Z .
-docker push  tcheksa62/kevent:vX.Y.Z
-
-# Dispatcher  →  tcheksa62/side-event:<tag>
-docker build -t tcheksa62/side-event:vX.Y.Z ./dispatcher
-docker push  tcheksa62/side-event:vX.Y.Z
+# Tag and push — CI builds multi-arch image + binary + GitHub Release automatically
+git tag gateway/vX.Y.Z    && git push origin gateway/vX.Y.Z
+git tag dispatcher/vX.Y.Z && git push origin dispatcher/vX.Y.Z
 ```
 
-Current tags: gateway `v0.2.4`, dispatcher `v0.2.4`.
+Images:
+- Gateway:    `ghcr.io/ronan-wescale/ai-kevent/gateway:vX.Y.Z`
+- Dispatcher: `ghcr.io/ronan-wescale/ai-kevent/dispatcher:vX.Y.Z`
 
-After a push, update:
-1. `values.yaml` → `image.tag`
-2. `k8s/inference-transcription.yaml` → `spec.containers[name=dispatcher].image`
-3. Commit to git
+Current tags: gateway `v0.2.5`, dispatcher `v0.2.5`.
+
+After tagging, also update:
+1. `helm/gateway/values.yaml` → `image.tag`
+2. `k8s/inference-transcription.yaml` → dispatcher image tag
+3. Bump `helm/gateway/Chart.yaml` version if chart files changed
+4. Update `CHANGELOG.md`
+5. Commit to main
 
 ## Architecture
 
@@ -129,8 +131,15 @@ kubectl get secret kevent-dispatcher-kafka -n default \
 
 Helm chart deploys the gateway with Redis-HA (HAProxy front-end). The dispatcher runs as a sidecar in the `ServingRuntime` (KServe), not managed by Helm.
 
+The Helm chart is published to GitHub Pages at `https://ronan-wescale.github.io/ai-kevent` (auto-updated on push to `main` when `helm/` changes). The `gh-pages` branch must exist in the repository.
+
 ```bash
-# Deploy / upgrade gateway
+# Add Helm repo
+helm repo add kevent https://ronan-wescale.github.io/ai-kevent
+helm repo update
+helm install kevent-gateway kevent/kevent-gateway -f values.yaml
+
+# Or deploy from local sources
 helm upgrade --install kevent-gateway ./helm/gateway -f values.yaml
 
 # Apply Strimzi users (namespace infra-kafka)

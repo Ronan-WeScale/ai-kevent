@@ -1,0 +1,30 @@
+name: Release — Helm chart
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "helm/**"
+
+jobs:
+  release:
+    name: Package & publish to GitHub Pages
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # push to gh-pages branch
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0    # chart-releaser needs full history to detect changes
+
+      - uses: azure/setup-helm@v4
+
+      - uses: helm/chart-releaser-action@v1.6.0
+        with:
+          charts_dir: helm
+          # chart-releaser creates GitHub releases tagged kevent-gateway-<version>
+          # and updates index.yaml on the gh-pages branch.
+        env:
+          CR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
