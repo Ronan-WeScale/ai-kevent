@@ -29,7 +29,6 @@ jobs:
       - uses: helm/chart-releaser-action@v1.6.0
         with:
           charts_dir: helm
-          # chart-releaser creates GitHub releases tagged kevent-gateway-<version>
-          # and updates index.yaml on the gh-pages branch.
+          skip_existing: true   # évite le 403 si la release existe déjà (ex: rerun)
         env:
           CR_TOKEN: ${{ secrets.GITHUB_TOKEN }}

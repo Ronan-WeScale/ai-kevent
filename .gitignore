@@ -1,4 +1,5 @@
-values.yaml
+# Root-level values.yaml (prod overrides avec secrets — ne pas commiter)
+/values.yaml
 /gateway
 /dispatcher/dispatcher
 .claude/**

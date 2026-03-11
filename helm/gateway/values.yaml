@@ -1,0 +1,127 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/ronan-wescale/ai-kevent/gateway
+  tag: "v0.2.5"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations: {}
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+  host: api.kevent.example.com
+  tls: []
+  #  - secretName: kevent-gateway-tls
+  #    hosts:
+  #      - api.kevent.example.com
+
+# ── S3 / Scaleway Object Storage ─────────────────────────────────────────────
+s3:
+  endpoint: "https://s3.fr-par.scw.cloud"
+  region: "fr-par"
+  bucket: "test-kevent-jobs"
+  # Option A : fournir les credentials directement (créé un Secret dans le cluster)
+  accessKey: ""
+  secretKey: ""
+  # Option B : référencer un Secret existant (ex: géré par External Secrets)
+  #   Le Secret doit contenir les clés S3_ACCESS_KEY et S3_SECRET_KEY.
+  existingSecret: ""
+
+# ── Kafka ─────────────────────────────────────────────────────────────────────
+kafka:
+  brokers: "kafka:9092"
+  sasl:
+    enabled: false
+    mechanism: SCRAM-SHA-512
+    username: kevent-gateway
+    # Option A : fournir le mot de passe directement (crée un Secret dans le cluster)
+    password: ""
+    # Option B : référencer un Secret existant (ex: copie du secret Strimzi kevent-gateway)
+    #   Le Secret doit contenir la clé KAFKA_SASL_PASSWORD.
+    existingSecret: ""
+  tls:
+    enabled: false
+    # Secret contenant la CA du cluster Strimzi (clé : ca.crt).
+    # À créer dans le namespace du gateway depuis default-cluster-ca-cert (infra-kafka).
+    existingCACertSecret: "kafka-cluster-ca-cert"
+
+# ── Chiffrement at-rest (S3) ──────────────────────────────────────────────────
+# Clé AES-256-GCM partagée entre le gateway et tous les dispatcher sidecars.
+# Générer : openssl rand -hex 32
+# Vide = chiffrement désactivé.
+encryption:
+  key: ""
+  # Option B : référencer un Secret existant (ex: géré par External Secrets)
+  #   Le Secret doit contenir la clé ENCRYPTION_KEY.
+  existingSecret: ""
+
+# ── Services d'inférence enregistrés ─────────────────────────────────────────
+# Chaque service peut opérer en mode async (Kafka) et/ou sync (proxy OpenAI).
+#
+# Champs sync (optionnels) :
+#   model        — valeur du champ "model" dans le payload OpenAI, utilisée pour
+#                  router les requêtes POST /v1/* vers le bon backend
+#   openaiPaths  — liste des chemins exposés par le gateway pour ce modèle
+#                  (ex: ["/v1/audio/transcriptions", "/v1/audio/translations"])
+#   inferenceURL — URL de base du dispatcher Knative ; le chemin de la requête
+#                  d'origine y est appendé automatiquement
+#
+# Champs async (Kafka) — topics nommés d'après le modèle :
+#   inputTopic / resultTopic / acceptedExts / maxFileSizeMB
+services:
+  - type: transcription
+    # Sync / OpenAI-compatible
+    model: "whisper-large-v3"
+    openaiPaths:
+      - "/v1/audio/transcriptions"
+      - "/v1/audio/translations"
+    inferenceURL: "http://kevent-transcription-predictor.default.svc.cluster.local"
+    # Async / Kafka
+    inputTopic: "jobs.whisper-large-v3.input"
+    resultTopic: "jobs.whisper-large-v3.results"
+    acceptedExts: [".mp3", ".wav", ".m4a", ".ogg", ".flac"]
+    maxFileSizeMB: 500
+
+  - type: ocr
+    # Sync / OpenAI-compatible
+    model: "llava-v1.6-mistral-7b"
+    openaiPaths:
+      - "/v1/chat/completions"
+    inferenceURL: "http://kevent-ocr-predictor.default.svc.cluster.local"
+    # Async / Kafka
+    inputTopic: "jobs.llava-v1.6-mistral-7b.input"
+    resultTopic: "jobs.llava-v1.6-mistral-7b.results"
+    acceptedExts: [".pdf", ".jpg", ".jpeg", ".png", ".tiff", ".bmp"]
+    maxFileSizeMB: 50
+
+# ── Redis ─────────────────────────────────────────────────────────────────────
+# Valeurs passées au subchart dandydeveloper/redis-ha.
+# HAProxy est activé pour exposer un endpoint stable (master actif) au gateway.
+redis-ha:
+  enabled: true
+  haproxy:
+    enabled: true    # expose {{ .Release.Name }}-redis-ha-haproxy:6379
+    replicas: 2
+  redis:
+    masterGroupName: "mymaster"
+  replicas: 3
+
+# ── Ressources / scheduling ───────────────────────────────────────────────────
+resources: {}
+  # limits:
+  #   cpu: 500m
+  #   memory: 256Mi
+  # requests:
+  #   cpu: 100m
+  #   memory: 128Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
