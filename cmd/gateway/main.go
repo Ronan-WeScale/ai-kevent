@@ -75,8 +75,8 @@ func main() {
 	r.Get("/health", handler.Health)
 	r.Get("/docs", handler.DocsUI)
 	r.Get("/openapi.yaml", handler.DocsSpec)
-	r.Post("/jobs", jobHandler.Submit)
-	r.Get("/jobs/{id}", jobHandler.GetStatus)
+	r.Post("/jobs/{service_type}", jobHandler.Submit)
+	r.Get("/jobs/{service_type}/{id}", jobHandler.GetStatus)
 
 	// OpenAI-compatible sync endpoints — routed by the "model" field in the payload.
 	if registry.HasSyncServices() {

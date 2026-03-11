@@ -66,3 +66,15 @@ Utilise le Secret existant si spécifié, sinon celui créé par ce chart.
 {{- printf "%s-s3" (include "kevent-gateway.fullname" .) -}}
 {{- end -}}
 {{- end }}
+
+{{/*
+Nom du Secret contenant le mot de passe SASL Kafka.
+Utilise le Secret existant si spécifié, sinon celui créé par ce chart.
+*/}}
+{{- define "kevent-gateway.kafkaSecretName" -}}
+{{- if .Values.kafka.sasl.existingSecret -}}
+{{- .Values.kafka.sasl.existingSecret -}}
+{{- else -}}
+{{- printf "%s-kafka" (include "kevent-gateway.fullname" .) -}}
+{{- end -}}
+{{- end }}

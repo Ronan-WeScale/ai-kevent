@@ -41,14 +41,16 @@ func NewJobHandler(
 type submitResponse struct {
 	JobID       string `json:"job_id"`
 	ServiceType string `json:"service_type"`
+	Model       string `json:"model"`
 	Status      string `json:"status"`
 }
 
-// statusResponse is the body returned on GET /jobs/{id}.
+// statusResponse is the body returned on GET /jobs/{service_type}/{id}.
 // CallbackURL is intentionally excluded from the response.
 type statusResponse struct {
 	JobID       string          `json:"job_id"`
 	ServiceType string          `json:"service_type"`
+	Model       string          `json:"model"`
 	Status      model.JobStatus `json:"status"`
 	Result      json.RawMessage `json:"result,omitempty"` // inline result payload when completed
 	Error       string          `json:"error,omitempty"`
@@ -56,32 +58,36 @@ type statusResponse struct {
 	UpdatedAt   time.Time       `json:"updated_at"`
 }
 
-// Submit handles POST /jobs.
+// Submit handles POST /jobs/{service_type}.
 //
 // Form fields:
 //
-//	type         (required) – inference service type, e.g. "transcription", "ocr"
+//	model        (optional if only one model for the type) – e.g. "whisper-large-v3"
 //	file         (required) – the binary file to process
 //	callback_url (optional) – webhook URL notified when the job completes
 func (h *JobHandler) Submit(w http.ResponseWriter, r *http.Request) {
-	serviceType := r.FormValue("type")
-	if serviceType == "" {
-		writeError(w, http.StatusBadRequest, "field 'type' is required")
-		return
-	}
+	serviceType := chi.URLParam(r, "service_type")
 
-	def, err := h.registry.Get(serviceType)
+	// Set the body size limit using the maximum across all models for this service
+	// type, before ParseMultipartForm. The model field inside the form is not yet
+	// readable at this point.
+	maxSize, err := h.registry.MaxFileSizeForType(serviceType)
 	if err != nil {
-		writeError(w, http.StatusBadRequest,
-			fmt.Sprintf("unknown service type %q (available: %v)", serviceType, h.registry.Types()))
+		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxSize<<20)
 
-	// Enforce the per-service file size limit before parsing the body.
-	r.Body = http.MaxBytesReader(w, r.Body, def.MaxFileSizeMB<<20)
 	// Buffer up to 32 MB in memory; the rest spills to a temp file on disk.
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid multipart form: "+err.Error())
+		return
+	}
+
+	// Resolve the specific model def now that the form is parsed.
+	def, err := h.registry.RouteAsync(serviceType, r.FormValue("model"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -92,7 +98,7 @@ func (h *JobHandler) Submit(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	if err := h.registry.ValidateFile(serviceType, header.Filename); err != nil {
+	if err := h.registry.ValidateFileDef(def, header.Filename); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -114,6 +120,7 @@ func (h *JobHandler) Submit(w http.ResponseWriter, r *http.Request) {
 	job := &model.Job{
 		ID:          jobID,
 		ServiceType: serviceType,
+		Model:       def.Model,
 		Status:      model.JobStatusPending,
 		InputRef:    inputRef,
 		CallbackURL: callbackURL,
@@ -128,10 +135,11 @@ func (h *JobHandler) Submit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Step 3 — publish the input event to the service's Kafka topic.
+	// Step 3 — publish the input event to the model's Kafka topic.
 	event := &model.InputEvent{
 		JobID:       jobID,
 		ServiceType: serviceType,
+		Model:       def.Model,
 		InputRef:    inputRef,
 		CreatedAt:   now,
 	}
@@ -146,6 +154,7 @@ func (h *JobHandler) Submit(w http.ResponseWriter, r *http.Request) {
 	slog.InfoContext(r.Context(), "job submitted",
 		"job_id", jobID,
 		"service_type", serviceType,
+		"model", def.Model,
 		"file", header.Filename,
 	)
 
@@ -156,13 +165,15 @@ func (h *JobHandler) Submit(w http.ResponseWriter, r *http.Request) {
 	_ = enc.Encode(submitResponse{
 		JobID:       jobID,
 		ServiceType: serviceType,
+		Model:       def.Model,
 		Status:      string(model.JobStatusPending),
 	})
 }
 
-// GetStatus handles GET /jobs/{id}.
-// When the job is complete it includes a short-lived presigned download URL.
+// GetStatus handles GET /jobs/{service_type}/{id}.
+// When the job is complete the result is inlined in the response body.
 func (h *JobHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
+	serviceType := chi.URLParam(r, "service_type")
 	id := chi.URLParam(r, "id")
 
 	job, err := h.redis.GetJob(r.Context(), id)
@@ -171,9 +182,16 @@ func (h *JobHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate that the job belongs to the requested service type.
+	if job.ServiceType != serviceType {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("job %q not found", id))
+		return
+	}
+
 	resp := statusResponse{
 		JobID:       job.ID,
 		ServiceType: job.ServiceType,
+		Model:       job.Model,
 		Status:      job.Status,
 		Error:       job.Error,
 		CreatedAt:   job.CreatedAt,

@@ -42,18 +42,18 @@
 ┌──────────────────┐                ┌────────────────────────────────────────────┐
 │  Scaleway S3     │                │  Knative Services (1 par type de service)  │
 │                  │                │                                            │
-│  {job_id}/       │                │  kevent-dispatcher-transcription           │
+│  {job_id}/       │                │  kevent-transcription-predictor            │
 │  input.ext  ◀────┼────────────────│  ┌──────────────────────┐ ┌────────────┐  │
 │  result.json────▶│                │  │  dispatcher  :8080   │ │ whisper    │  │
 └──────────────────┘                │  │  ─────────────────── │ │ :9000      │  │
                                     │  │  POST /   async       │ │            │  │
 ┌──────────────────┐                │  │   KafkaSource↗  ─────┼▶│  GPU       │  │
-│  Kafka           │                │  │  POST /v1/* sync      │ │  inférence │  │
-│                  │                │  │   Gateway↗      ─────┼▶│            │  │
-│  jobs.*.input ───┼── KafkaSource─▶│  └──────────────────────┘ └────────────┘  │
-│  jobs.*.results◀─┼────────────────│                                            │
-└──────────────────┘                │  kevent-dispatcher-ocr  (même structure)  │
-                                    └────────────────────────────────────────────┘
+│  Kafka (SASL_SSL)│                │  │  POST /v1/* sync      │ │  inférence │  │
+│  port 9093       │                │  │   Gateway↗      ─────┼▶│            │  │
+│                  │                │  └──────────────────────┘ └────────────┘  │
+│  jobs.*.input ───┼── KafkaSource─▶│                                            │
+│  jobs.*.results◀─┼────────────────│  kevent-dispatcher-ocr  (même structure)  │
+└──────────────────┘                └────────────────────────────────────────────┘
 ```
 
 ---
@@ -265,7 +265,7 @@ kevent-jobs/
 
 ```
 openai_path                      model                    InferenceURL
-/v1/audio/transcriptions   →   whisper-large-v3   →   http://kevent-dispatcher-transcription…
+/v1/audio/transcriptions   →   whisper-large-v3   →   http://kevent-transcription-predictor…
 /v1/chat/completions        →   llava-v1.6-…       →   http://kevent-dispatcher-ocr…
 ```
 
@@ -273,7 +273,7 @@ Plusieurs services peuvent partager le même `openai_path` (ex: deux modèles su
 
 ---
 
-### Sémantique des codes HTTP du dispatcher (mode async)
+## Sémantique des codes HTTP du dispatcher (mode async)
 
 | Code | Signification | Comportement KafkaSource |
 |---|---|---|
@@ -283,79 +283,221 @@ Plusieurs services peuvent partager le même `openai_path` (ex: deux modèles su
 
 ---
 
-### Knative Service spec (exemple transcription)
+## Kafka — authentification SASL/TLS
 
-```yaml
-apiVersion: serving.knative.dev/v1
-kind: Service
-metadata:
-  name: kevent-dispatcher-transcription
-spec:
-  template:
-    metadata:
-      annotations:
-        autoscaling.knative.dev/max-scale: "5"
-        autoscaling.knative.dev/scale-to-zero-pod-retention-period: "2m"
-    spec:
-      containerConcurrency: 1    # 1 requête par pod = 1 GPU par job
-      timeoutSeconds: 600        # 10 min max — s'applique aux deux modes (async et sync)
-      containers:
+Le cluster Kafka (Strimzi) écoute sur le port **9093** (`SASL_SSL`). Le gateway et le dispatcher s'authentifient avec SCRAM-SHA-512.
 
-        - name: dispatcher
-          image: kevent-dispatcher:latest
-          ports:
-            - name: http1          # http1 = HTTP/1.1 (pas h2c) pour queue-proxy
-              containerPort: 8080
-              protocol: TCP
-          env:
-            - name: SERVICE_TYPE
-              value: transcription
-            - name: INFERENCE_PORT
-              value: "9000"
-            - name: S3_ACCESS_KEY
-              valueFrom: {secretKeyRef: {name: scaleway, key: access-key}}
-            - name: S3_SECRET_KEY
-              valueFrom: {secretKeyRef: {name: scaleway, key: secret-key}}
-            - name: KAFKA_BROKERS
-              value: "kafka:9092"
-          readinessProbe:          # TCP dial sur 127.0.0.1:9000 — bloque jusqu'à ce
-            httpGet:               # que whisper soit prêt (évite la race condition)
-              path: /health
-              port: 8080
+### Mécanismes supportés
 
-        - name: whisper
-          image: ghcr.io/your-org/whisper-server:latest
-          ports:
-            - containerPort: 9000
-          resources:
-            limits:
-              nvidia.com/gpu: "1"
-          readinessProbe:
-            httpGet:
-              path: /health
-              port: 9000
-            initialDelaySeconds: 30
+| Mécanisme | `sasl.mechanism` | Notes |
+|---|---|---|
+| `SCRAM-SHA-512` | `SCRAM-SHA-512` | Utilisé en production (Strimzi) |
+| `SCRAM-SHA-256` | `SCRAM-SHA-256` | Supporté |
+| `PLAIN` | `PLAIN` | Pour les environnements de dev/test |
+
+### ACLs Strimzi requises
+
+**`kevent-gateway`** :
+
+| Ressource | Pattern | Opérations |
+|---|---|---|
+| topic `jobs.*` | prefix | `Read`, `Write`, `Create`, `Describe` |
+| group `kevent-gateway` | prefix | `Read`, `Describe`, `Delete` |
+
+**`kevent-dispatcher`** :
+
+| Ressource | Pattern | Opérations |
+|---|---|---|
+| topic `jobs.*` | prefix | `Read`, `Write`, `Create`, `Describe` |
+| group `inference-*` | prefix | `Read`, `Describe`, `Delete` |
+
+> `Delete` sur les groupes est requis par le contrôleur Knative pour la finalisation du ConsumerGroup lors de la suppression ou mise à jour d'un KafkaSource.
+
+### Piège courant — newline dans les secrets
+
+Les valeurs de secrets Kubernetes créées via `echo` ou heredoc incluent souvent un newline final (`\n`). Pour `sasl-type`, le contrôleur Knative fait une comparaison exacte de chaîne — un newline rend le mécanisme non reconnu et provoque l'erreur :
+
+```
+[protocol SASL_SSL] unsupported SASL mechanism (key: sasl.mechanism)
 ```
 
-### KafkaSource spec (exemple transcription)
+Toujours créer les secrets avec `printf` (pas `echo`) :
+
+```bash
+kubectl create secret generic kevent-dispatcher-kafka \
+  --from-literal=username=kevent-dispatcher \
+  --from-literal=password=<mot-de-passe> \
+  --from-literal=sasl-type=SCRAM-SHA-512
+# kubectl create secret --from-literal n'ajoute pas de newline
+```
+
+---
+
+## Déploiement Kubernetes
+
+### ServingRuntime (dispatcher sidecar)
+
+```yaml
+apiVersion: serving.kserve.io/v1alpha1
+kind: ServingRuntime
+metadata:
+  name: whisper-runtime
+spec:
+  containers:
+    - name: kserve-container     # container modèle (whisper)
+      image: ghcr.io/ia-generative/whisper-api:latest-gpu
+      # ...
+
+    - name: dispatcher           # sidecar kevent
+      image: tcheksa62/side-event:v0.2.4
+      ports:
+        - name: http1
+          containerPort: 8080
+      env:
+        - name: SERVICE_TYPE
+          value: transcription
+        - name: INFERENCE_PORT
+          value: "9000"
+        - name: KAFKA_BROKERS
+          value: "default-kafka-bootstrap.infra-kafka.svc.cluster.local:9093"
+        - name: KAFKA_SASL_MECHANISM
+          value: "SCRAM-SHA-512"
+        - name: KAFKA_TLS_ENABLED
+          value: "true"
+        - name: KAFKA_CA_CERT_PATH
+          value: "/etc/kafka-tls/ca.crt"
+        - name: KAFKA_SASL_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: kevent-dispatcher-kafka
+              key: username
+        - name: KAFKA_SASL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: kevent-dispatcher-kafka
+              key: password
+        - name: S3_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: kevent-s3-credentials
+              key: access-key
+        - name: S3_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: kevent-s3-credentials
+              key: secret-key
+        - name: CONFIG_PATH
+          value: /etc/kevent/config.yaml
+        - name: S3_BUCKET
+          value: kevent-jobs
+      volumeMounts:
+        - name: kevent-sidecar
+          mountPath: /etc/kevent/
+        - name: kafka-tls
+          mountPath: /etc/kafka-tls
+          readOnly: true
+  volumes:
+    - name: kevent-sidecar
+      configMap:
+        name: kevent-sidecar
+    - name: kafka-tls
+      secret:
+        secretName: kafka-cluster-ca-cert   # CA Strimzi (clé : ca.crt)
+```
+
+### KafkaSource
 
 ```yaml
 apiVersion: sources.knative.dev/v1
 kind: KafkaSource
 metadata:
-  name: transcription-source
+  name: kafka-source
+  namespace: default
 spec:
-  bootstrapServers: ["kafka:9092"]
-  topics: ["jobs.transcription.input"]
+  bootstrapServers:
+    - "default-kafka-bootstrap.infra-kafka.svc.cluster.local:9093"
+  topics:
+    - "jobs.transcription.input"
   consumerGroup: "inference-transcription"
+  initialOffset: latest
+  net:
+    sasl:
+      enable: true
+      type:
+        secretKeyRef:
+          name: kevent-dispatcher-kafka
+          key: sasl-type       # valeur : SCRAM-SHA-512 (sans newline)
+      user:
+        secretKeyRef:
+          name: kevent-dispatcher-kafka
+          key: username
+      password:
+        secretKeyRef:
+          name: kevent-dispatcher-kafka
+          key: password
+    tls:
+      enable: true
+      caCert:
+        secretKeyRef:
+          name: kafka-cluster-ca-cert
+          key: ca.crt
   delivery:
-    timeout: "PT12M"       # > timeoutSeconds du Service (600s)
-    retry: 3               # pour les 500 (erreurs infra transitoires)
+    timeout: "PT600S"
+    retry: 10
     backoffPolicy: exponential
-    backoffDelay: "PT30S"
+    backoffDelay: "PT0.3S"
+    ordering: ordered
   sink:
     ref:
       apiVersion: serving.knative.dev/v1
       kind: Service
-      name: kevent-dispatcher-transcription
+      name: kevent-transcription-predictor
+      namespace: default
+```
+
+### KafkaUser Strimzi
+
+Défini dans `k8s/kafka-users.yaml` :
+
+```yaml
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaUser
+metadata:
+  name: kevent-dispatcher
+  namespace: infra-kafka
+  labels:
+    strimzi.io/cluster: default
+spec:
+  authentication:
+    type: scram-sha-512
+  authorization:
+    type: simple
+    acls:
+      - resource: { type: topic, name: jobs., patternType: prefix }
+        operations: [Read, Describe]
+      - resource: { type: group, name: inference-, patternType: prefix }
+        operations: [Read, Describe, Delete]
+      - resource: { type: topic, name: jobs., patternType: prefix }
+        operations: [Write, Create, Describe]
+```
+
+---
+
+## Images Docker
+
+| Composant | Image | Tag actuel |
+|---|---|---|
+| Gateway | `tcheksa62/kevent` | `v0.2.4` |
+| Dispatcher sidecar | `tcheksa62/side-event` | `v0.2.4` |
+
+Build et push :
+
+```bash
+# Gateway
+docker build -t tcheksa62/kevent:vX.Y.Z .
+docker push tcheksa62/kevent:vX.Y.Z
+
+# Dispatcher
+docker build -t tcheksa62/side-event:vX.Y.Z ./dispatcher
+docker push tcheksa62/side-event:vX.Y.Z
 ```

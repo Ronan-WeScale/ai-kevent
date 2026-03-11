@@ -45,10 +45,23 @@ spec:
                 secretKeyRef:
                   name: {{ include "kevent-gateway.s3SecretName" . }}
                   key: S3_SECRET_KEY
+            {{- if .Values.kafka.sasl.enabled }}
+            # Mot de passe SASL Kafka expansé par os.Expand (syntaxe ${VAR} dans config.yaml).
+            - name: KAFKA_SASL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kevent-gateway.kafkaSecretName" . }}
+                  key: KAFKA_SASL_PASSWORD
+            {{- end }}
           volumeMounts:
             - name: config
               mountPath: /etc/kevent
               readOnly: true
+            {{- if .Values.kafka.tls.enabled }}
+            - name: kafka-tls
+              mountPath: /etc/kafka-tls
+              readOnly: true
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /health
@@ -70,6 +83,11 @@ spec:
         - name: config
           configMap:
             name: {{ include "kevent-gateway.fullname" . }}
+        {{- if .Values.kafka.tls.enabled }}
+        - name: kafka-tls
+          secret:
+            secretName: {{ .Values.kafka.tls.existingCACertSecret }}
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

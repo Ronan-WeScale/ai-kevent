@@ -14,6 +14,7 @@ import (
 // Def describes a registered inference service type.
 type Def struct {
 	Type          string
+	Model         string
 	InputTopic    string
 	ResultTopic   string
 	AcceptedExts  map[string]struct{} // empty = accept any extension
@@ -21,20 +22,19 @@ type Def struct {
 
 	// Sync / OpenAI-compatible mode (optional).
 	InferenceURL string // full URL of the backend endpoint
-	Model        string // value of the "model" field used for routing
 	OpenAIPath   string // e.g. "/v1/audio/transcriptions"
 }
 
-// Registry maps service type names to their runtime definitions.
+// Registry maps (service_type, model) pairs to their runtime definitions.
 type Registry struct {
-	defs   map[string]*Def
-	bySync map[string]map[string]*Def // openai_path → model → Def
+	byTypeModel map[string]map[string]*Def // type → model → Def
+	bySync      map[string]map[string]*Def // openai_path → model → Def
 }
 
 func NewRegistry(cfgs []config.ServiceConfig) *Registry {
 	r := &Registry{
-		defs:   make(map[string]*Def, len(cfgs)),
-		bySync: make(map[string]map[string]*Def),
+		byTypeModel: make(map[string]map[string]*Def, len(cfgs)),
+		bySync:      make(map[string]map[string]*Def),
 	}
 	for _, cfg := range cfgs {
 		exts := make(map[string]struct{}, len(cfg.AcceptedExts))
@@ -43,15 +43,19 @@ func NewRegistry(cfgs []config.ServiceConfig) *Registry {
 		}
 		def := &Def{
 			Type:          cfg.Type,
+			Model:         cfg.Model,
 			InputTopic:    cfg.InputTopic,
 			ResultTopic:   cfg.ResultTopic,
 			AcceptedExts:  exts,
 			MaxFileSizeMB: cfg.MaxFileSizeMB,
 			InferenceURL:  cfg.InferenceURL,
-			Model:         cfg.Model,
 			OpenAIPath:    cfg.OpenAIPath,
 		}
-		r.defs[cfg.Type] = def
+
+		if r.byTypeModel[cfg.Type] == nil {
+			r.byTypeModel[cfg.Type] = make(map[string]*Def)
+		}
+		r.byTypeModel[cfg.Type][cfg.Model] = def
 
 		// Build the sync routing index.
 		if cfg.OpenAIPath != "" && cfg.Model != "" && cfg.InferenceURL != "" {
@@ -64,11 +68,32 @@ func NewRegistry(cfgs []config.ServiceConfig) *Registry {
 	return r
 }
 
-// Get returns the definition for the given service type, or an error if unknown.
-func (r *Registry) Get(serviceType string) (*Def, error) {
-	d, ok := r.defs[serviceType]
+// RouteAsync returns the Def for the given (service_type, model) pair.
+// If model is empty and only one model is configured for the type, it is used.
+func (r *Registry) RouteAsync(serviceType, model string) (*Def, error) {
+	models, ok := r.byTypeModel[serviceType]
 	if !ok {
 		return nil, fmt.Errorf("unknown service type %q", serviceType)
+	}
+	if model == "" {
+		if len(models) == 1 {
+			for _, d := range models {
+				return d, nil
+			}
+		}
+		available := make([]string, 0, len(models))
+		for m := range models {
+			available = append(available, m)
+		}
+		return nil, fmt.Errorf("service type %q has multiple models, specify one via ?model= (available: %v)", serviceType, available)
+	}
+	d, ok := models[model]
+	if !ok {
+		available := make([]string, 0, len(models))
+		for m := range models {
+			available = append(available, m)
+		}
+		return nil, fmt.Errorf("model %q not found for service type %q (available: %v)", model, serviceType, available)
 	}
 	return d, nil
 }
@@ -104,12 +129,25 @@ func (r *Registry) SyncPaths() []string {
 	return paths
 }
 
-// ValidateFile checks that the file's extension is accepted by the service.
-func (r *Registry) ValidateFile(serviceType, filename string) error {
-	def, err := r.Get(serviceType)
-	if err != nil {
-		return err
+// MaxFileSizeForType returns the largest MaxFileSizeMB across all models for
+// the given service type. Used to set the body read limit before form parsing,
+// before the specific model is known.
+func (r *Registry) MaxFileSizeForType(serviceType string) (int64, error) {
+	models, ok := r.byTypeModel[serviceType]
+	if !ok {
+		return 0, fmt.Errorf("unknown service type %q", serviceType)
 	}
+	var max int64
+	for _, d := range models {
+		if d.MaxFileSizeMB > max {
+			max = d.MaxFileSizeMB
+		}
+	}
+	return max, nil
+}
+
+// ValidateFileDef checks that the file's extension is accepted by the given service def.
+func (r *Registry) ValidateFileDef(def *Def, filename string) error {
 	if len(def.AcceptedExts) == 0 {
 		return nil // no restriction configured
 	}
@@ -119,15 +157,15 @@ func (r *Registry) ValidateFile(serviceType, filename string) error {
 		for e := range def.AcceptedExts {
 			accepted = append(accepted, e)
 		}
-		return fmt.Errorf("extension %q not accepted for service %q (accepted: %v)", ext, serviceType, accepted)
+		return fmt.Errorf("extension %q not accepted for model %q (accepted: %v)", ext, def.Model, accepted)
 	}
 	return nil
 }
 
-// Types returns all registered service type names.
+// Types returns all registered service type names (unique).
 func (r *Registry) Types() []string {
-	types := make([]string, 0, len(r.defs))
-	for t := range r.defs {
+	types := make([]string, 0, len(r.byTypeModel))
+	for t := range r.byTypeModel {
 		types = append(types, t)
 	}
 	return types
@@ -136,10 +174,12 @@ func (r *Registry) Types() []string {
 // Models returns all service definitions that expose an OpenAI-compatible model
 // (i.e. have a non-empty Model field). Used for the GET /v1/models endpoint.
 func (r *Registry) Models() []*Def {
-	defs := make([]*Def, 0, len(r.defs))
-	for _, d := range r.defs {
-		if d.Model != "" {
-			defs = append(defs, d)
+	var defs []*Def
+	for _, models := range r.byTypeModel {
+		for _, d := range models {
+			if d.Model != "" {
+				defs = append(defs, d)
+			}
 		}
 	}
 	return defs
@@ -147,9 +187,11 @@ func (r *Registry) Models() []*Def {
 
 // All returns all service definitions (used to start result consumers).
 func (r *Registry) All() []*Def {
-	defs := make([]*Def, 0, len(r.defs))
-	for _, d := range r.defs {
-		defs = append(defs, d)
+	var defs []*Def
+	for _, models := range r.byTypeModel {
+		for _, d := range models {
+			defs = append(defs, d)
+		}
 	}
 	return defs
 }

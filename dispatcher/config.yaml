@@ -1,6 +1,6 @@
 service:
   type: "${SERVICE_TYPE}"
-  result_topic: ""    # auto-dérivé: "jobs.{type}.results" si vide
+  result_topic: ""    # auto-dérivé: "jobs.{model}.results" si vide (ex: jobs.whisper-large-v3.results)
   # Pas de max_concurrency : géré par containerConcurrency dans le Knative Service spec.
 
 kafka:

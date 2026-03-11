@@ -134,14 +134,9 @@ func expandWithDefault(key string) string {
 }
 
 func (c *Config) applyDefaults() {
-	if c.Service.ResultTopic == "" && c.Service.Type != "" {
-		c.Service.ResultTopic = "jobs." + c.Service.Type + ".results"
-	}
+	// Apply model defaults first so auto-derivation of result_topic uses the model name.
 	if c.Transcription.Model == "" {
 		c.Transcription.Model = "whisper-large-v3"
-	}
-	if c.Transcription.ResponseFormat == "" {
-		c.Transcription.ResponseFormat = "json"
 	}
 	if c.Diarization.Model == "" {
 		c.Diarization.Model = "pyannote-audio-3.1"
@@ -149,12 +144,32 @@ func (c *Config) applyDefaults() {
 	if c.OCR.Model == "" {
 		c.OCR.Model = "llava-v1.6-mistral-7b"
 	}
+	// Auto-derive result topic from the active model name.
+	if c.Service.ResultTopic == "" && c.Service.Type != "" {
+		c.Service.ResultTopic = "jobs." + c.activeModel() + ".results"
+	}
+	if c.Transcription.ResponseFormat == "" {
+		c.Transcription.ResponseFormat = "json"
+	}
 	if c.OCR.Prompt == "" {
 		c.OCR.Prompt = "Extract all text visible in this document. Return only the extracted text."
 	}
 	if c.OCR.MaxTokens == 0 {
 		c.OCR.MaxTokens = 4096
 	}
+}
+
+// activeModel returns the model name for the configured service type.
+func (c *Config) activeModel() string {
+	switch c.Service.Type {
+	case "transcription":
+		return c.Transcription.Model
+	case "diarization":
+		return c.Diarization.Model
+	case "ocr":
+		return c.OCR.Model
+	}
+	return c.Service.Type
 }
 
 func (c *Config) validate() error {
