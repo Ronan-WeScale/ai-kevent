@@ -156,20 +156,24 @@ services:
   - type: transcription
     # ── Sync / OpenAI-compatible (optionnel) ──────────────────────────────
     model: "whisper-large-v3"
-    openai_path: "/v1/audio/transcriptions"
-    inference_url: "http://kevent-dispatcher-transcription.default.svc.cluster.local/v1/audio/transcriptions"
-    # ── Async / Kafka ─────────────────────────────────────────────────────
-    input_topic: jobs.transcription.input
-    result_topic: jobs.transcription.results
+    openai_paths:
+      - "/v1/audio/transcriptions"
+      - "/v1/audio/translations"
+    # URL de base — le chemin de la requête d'origine est appendé automatiquement
+    inference_url: "http://kevent-transcription-predictor.default.svc.cluster.local"
+    # ── Async / Kafka — topics nommés d'après le modèle ───────────────────
+    input_topic: jobs.whisper-large-v3.input
+    result_topic: jobs.whisper-large-v3.results
     accepted_exts: [".mp3", ".wav", ".m4a", ".ogg", ".flac"]
     max_file_size_mb: 500
 
   - type: ocr
     model: "llava-v1.6-mistral-7b"
-    openai_path: "/v1/chat/completions"
-    inference_url: "http://kevent-dispatcher-ocr.default.svc.cluster.local/v1/chat/completions"
-    input_topic: jobs.ocr.input
-    result_topic: jobs.ocr.results
+    openai_paths:
+      - "/v1/chat/completions"
+    inference_url: "http://kevent-ocr-predictor.default.svc.cluster.local"
+    input_topic: jobs.llava-v1.6-mistral-7b.input
+    result_topic: jobs.llava-v1.6-mistral-7b.results
     accepted_exts: [".pdf", ".jpg", ".jpeg", ".png", ".tiff", ".bmp"]
     max_file_size_mb: 50
 ```
@@ -188,8 +192,8 @@ services:
 | `KAFKA_SASL_PASSWORD` | _(vide)_ | Mot de passe SASL Kafka (expandé dans config.yaml) |
 | `REDIS_ADDR` | `redis:6379` | Adresse Redis |
 | `REDIS_PASSWORD` | _(vide)_ | Mot de passe Redis |
-| `TRANSCRIPTION_INFERENCE_URL` | _(URL cluster locale)_ | URL du dispatcher transcription (mode sync) |
-| `OCR_INFERENCE_URL` | _(URL cluster locale)_ | URL du dispatcher OCR (mode sync) |
+| `TRANSCRIPTION_WHISPER_LARGE_V3_URL` | _(URL cluster locale)_ | URL de base du dispatcher Whisper (mode sync) |
+| `OCR_LLAVA_URL` | _(URL cluster locale)_ | URL de base du dispatcher OCR (mode sync) |
 
 > Les variables d'environnement surchargent les valeurs du fichier YAML via la syntaxe `${VAR:-défaut}`.
 
@@ -245,7 +249,7 @@ helm upgrade --install kevent-gateway ./helm/gateway \
 ```yaml
 image:
   repository: tcheksa62/kevent
-  tag: v0.2.4
+  tag: v0.2.5
 
 kafka:
   brokers: "default-kafka-bootstrap.infra-kafka.svc.cluster.local:9093"
@@ -257,6 +261,18 @@ kafka:
   tls:
     enabled: true
     existingCACertSecret: "default-cluster-ca-cert"  # CA Strimzi (clé : ca.crt)
+
+services:
+  - type: transcription
+    model: "whisper-large-v3"
+    openaiPaths:
+      - "/v1/audio/transcriptions"
+      - "/v1/audio/translations"
+    inferenceURL: "http://kevent-transcription-predictor.default.svc.cluster.local"
+    inputTopic: "jobs.whisper-large-v3.input"
+    resultTopic: "jobs.whisper-large-v3.results"
+    acceptedExts: [".mp3", ".wav", ".m4a", ".ogg", ".flac"]
+    maxFileSizeMB: 500
 ```
 
 ---
@@ -272,18 +288,20 @@ services:
   - type: translation
     # Sync (si le dispatcher est déployé)
     model: "nllb-200"
-    openai_path: "/v1/chat/completions"
-    inference_url: "http://kevent-dispatcher-translation.default.svc.cluster.local/v1/chat/completions"
-    # Async
-    input_topic: jobs.translation.input
-    result_topic: jobs.translation.results
+    openai_paths:
+      - "/v1/chat/completions"
+    # URL de base — le chemin d'origine est appendé automatiquement
+    inference_url: "http://kevent-translation-predictor.default.svc.cluster.local"
+    # Async — topics nommés d'après le modèle
+    input_topic: jobs.nllb-200.input
+    result_topic: jobs.nllb-200.results
     accepted_exts: [".txt", ".pdf", ".docx"]
     max_file_size_mb: 10
 ```
 
 Le gateway démarrera automatiquement un consumer Kafka sur `result_topic` et acceptera les soumissions pour ce nouveau type.
 
-> **Routing sync multi-modèles** : plusieurs services peuvent partager le même `openai_path` (ex: `/v1/chat/completions`) — le gateway sélectionne le backend d'après la valeur du champ `model` dans le payload.
+> **Routing sync multi-modèles** : plusieurs services peuvent partager le même path (ex: `/v1/chat/completions`) — le gateway sélectionne le backend d'après la valeur du champ `model` dans le payload. Un même modèle peut aussi exposer plusieurs paths via `openai_paths`.
 
 > **Pré-requis Kafka** : les topics `input_topic` et `result_topic` doivent être créés avant le démarrage (`AllowAutoTopicCreation: false`).
 
@@ -293,7 +311,7 @@ Le gateway démarrera automatiquement un consumer Kafka sur `result_topic` et ac
 
 ### Mode sync — Endpoints OpenAI-compatibles
 
-Ces endpoints sont exposés si `model`, `openai_path` et `inference_url` sont configurés pour au moins un service.
+Ces endpoints sont exposés si `model`, `openai_paths` et `inference_url` sont configurés pour au moins un service.
 
 Le gateway sélectionne le backend en lisant le champ `model` du payload, puis proxie la requête vers le dispatcher Knative correspondant. La réponse est streamée directement au client — aucun état Redis, aucun S3.
 

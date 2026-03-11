@@ -68,9 +68,9 @@ type ServiceConfig struct {
 	// Sync / OpenAI-compatible mode (optional).
 	// Model is the value of the "model" field in the OpenAI payload used to
 	// route the request to the correct InferenceService backend.
-	Model        string `yaml:"model"`
-	OpenAIPath   string `yaml:"openai_path"`   // e.g. "/v1/audio/transcriptions"
-	InferenceURL string `yaml:"inference_url"` // InferenceService cluster URL
+	Model        string   `yaml:"model"`
+	OpenAIPaths  []string `yaml:"openai_paths"`  // e.g. ["/v1/audio/transcriptions", "/v1/audio/translations"]
+	InferenceURL string   `yaml:"inference_url"` // InferenceService cluster URL
 	// Async / Kafka mode.
 	InputTopic    string   `yaml:"input_topic"`
 	ResultTopic   string   `yaml:"result_topic"`

@@ -21,8 +21,8 @@ type Def struct {
 	MaxFileSizeMB int64
 
 	// Sync / OpenAI-compatible mode (optional).
-	InferenceURL string // full URL of the backend endpoint
-	OpenAIPath   string // e.g. "/v1/audio/transcriptions"
+	InferenceURL string   // full URL of the backend endpoint
+	OpenAIPaths  []string // e.g. ["/v1/audio/transcriptions", "/v1/audio/translations"]
 }
 
 // Registry maps (service_type, model) pairs to their runtime definitions.
@@ -49,7 +49,7 @@ func NewRegistry(cfgs []config.ServiceConfig) *Registry {
 			AcceptedExts:  exts,
 			MaxFileSizeMB: cfg.MaxFileSizeMB,
 			InferenceURL:  cfg.InferenceURL,
-			OpenAIPath:    cfg.OpenAIPath,
+			OpenAIPaths:   cfg.OpenAIPaths,
 		}
 
 		if r.byTypeModel[cfg.Type] == nil {
@@ -57,12 +57,17 @@ func NewRegistry(cfgs []config.ServiceConfig) *Registry {
 		}
 		r.byTypeModel[cfg.Type][cfg.Model] = def
 
-		// Build the sync routing index.
-		if cfg.OpenAIPath != "" && cfg.Model != "" && cfg.InferenceURL != "" {
-			if r.bySync[cfg.OpenAIPath] == nil {
-				r.bySync[cfg.OpenAIPath] = make(map[string]*Def)
+		// Build the sync routing index — one entry per configured path.
+		if cfg.Model != "" && cfg.InferenceURL != "" {
+			for _, path := range cfg.OpenAIPaths {
+				if path == "" {
+					continue
+				}
+				if r.bySync[path] == nil {
+					r.bySync[path] = make(map[string]*Def)
+				}
+				r.bySync[path][cfg.Model] = def
 			}
-			r.bySync[cfg.OpenAIPath][cfg.Model] = def
 		}
 	}
 	return r

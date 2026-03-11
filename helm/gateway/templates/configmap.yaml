@@ -47,8 +47,8 @@ data:
         {{- if .model }}
         model:             {{ .model | quote }}
         {{- end }}
-        {{- if .openaiPath }}
-        openai_path:       {{ .openaiPath | quote }}
+        {{- if .openaiPaths }}
+        openai_paths:      {{ .openaiPaths | toJson }}
         {{- end }}
         {{- if .inferenceURL }}
         inference_url:     {{ .inferenceURL | quote }}

@@ -7,6 +7,7 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -100,7 +101,16 @@ func (h *SyncHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	upstreamReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, def.InferenceURL, forwardBody)
+	// Build the upstream URL: base URL from config + original request path + query.
+	target, err := url.Parse(def.InferenceURL)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "invalid inference_url configuration")
+		return
+	}
+	target.Path = r.URL.Path
+	target.RawQuery = r.URL.RawQuery
+
+	upstreamReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, target.String(), forwardBody)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to build upstream request")
 		return
