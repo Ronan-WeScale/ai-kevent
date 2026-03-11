@@ -1,4 +1,6 @@
 values.yaml
+/gateway
+/dispatcher/dispatcher
 .claude/**
 **/charts/**
 **/Chart.lock
