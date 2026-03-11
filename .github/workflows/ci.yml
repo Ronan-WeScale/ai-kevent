@@ -40,5 +40,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: azure/setup-helm@v4
+      - run: helm repo add dandydeveloper https://dandydeveloper.github.io/charts
       - run: helm dependency update ./helm/gateway
       - run: helm lint ./helm/gateway

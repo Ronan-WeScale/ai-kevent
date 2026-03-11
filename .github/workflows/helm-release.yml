@@ -19,6 +19,11 @@ jobs:
         with:
           fetch-depth: 0    # chart-releaser needs full history to detect changes
 
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
       - uses: azure/setup-helm@v4
 
       - uses: helm/chart-releaser-action@v1.6.0
