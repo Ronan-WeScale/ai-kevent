@@ -17,11 +17,30 @@ import (
 
 	"github.com/google/uuid"
 
-	"kevent/gateway/internal/kafka"
 	"kevent/gateway/internal/model"
 	"kevent/gateway/internal/service"
 	"kevent/gateway/internal/storage"
 )
+
+// s3Store is the subset of storage.S3Client used by SyncHandler.
+type s3Store interface {
+	Upload(ctx context.Context, key string, body io.Reader, size int64, contentType string) error
+	GetObject(ctx context.Context, key string) ([]byte, error)
+	DeleteObject(ctx context.Context, key string) error
+}
+
+// jobStore is the subset of storage.RedisClient used by SyncHandler.
+type jobStore interface {
+	SaveJob(ctx context.Context, job *model.Job) error
+	GetJob(ctx context.Context, id string) (*model.Job, error)
+	DeleteJob(ctx context.Context, id string) error
+	SubscribeJobDone(ctx context.Context, jobID string) storage.JobDoneSubscription
+}
+
+// eventProducer is the subset of kafka.Producer used by SyncHandler.
+type eventProducer interface {
+	PublishInputEvent(ctx context.Context, topic string, event *model.InputEvent) error
+}
 
 // SyncHandler handles OpenAI-compatible POST /v1/* requests.
 //
@@ -33,17 +52,17 @@ import (
 //     backend (original behaviour).
 type SyncHandler struct {
 	registry   *service.Registry
-	s3         *storage.S3Client
-	redis      *storage.RedisClient
-	producer   *kafka.Producer
+	s3         s3Store
+	redis      jobStore
+	producer   eventProducer
 	httpClient *http.Client
 }
 
 func NewSyncHandler(
 	registry *service.Registry,
-	s3 *storage.S3Client,
-	redis *storage.RedisClient,
-	producer *kafka.Producer,
+	s3 s3Store,
+	redis jobStore,
+	producer eventProducer,
 ) *SyncHandler {
 	return &SyncHandler{
 		registry: registry,

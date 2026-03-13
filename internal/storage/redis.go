@@ -95,16 +95,20 @@ func (r *RedisClient) UpdateJobResult(ctx context.Context, jobID string, status 
 	return r.SaveJob(ctx, job)
 }
 
-// JobDoneSub is a single-use subscription that unblocks when a job completes.
-// Create it with SubscribeJobDone BEFORE publishing the job to Kafka, then
-// call Wait once the job has been enqueued.
-type JobDoneSub struct {
+// JobDoneSubscription is the interface returned by SubscribeJobDone.
+// Callers block on Wait until the job completes, then call Close.
+type JobDoneSubscription interface {
+	Wait(ctx context.Context) error
+	Close()
+}
+
+// jobDoneSub is the live Redis pub/sub implementation of JobDoneSubscription.
+type jobDoneSub struct {
 	ch     <-chan *redis.Message
 	pubsub *redis.PubSub
 }
 
-// Wait blocks until the job-done notification arrives or ctx is cancelled.
-func (s *JobDoneSub) Wait(ctx context.Context) error {
+func (s *jobDoneSub) Wait(ctx context.Context) error {
 	select {
 	case <-s.ch:
 		return nil
@@ -113,14 +117,13 @@ func (s *JobDoneSub) Wait(ctx context.Context) error {
 	}
 }
 
-// Close releases the underlying pub/sub connection.
-func (s *JobDoneSub) Close() { _ = s.pubsub.Close() }
+func (s *jobDoneSub) Close() { _ = s.pubsub.Close() }
 
 // SubscribeJobDone creates a subscription for the given job's completion channel.
 // Must be called BEFORE publishing the job to Kafka to avoid missing the notification.
-func (r *RedisClient) SubscribeJobDone(ctx context.Context, jobID string) *JobDoneSub {
+func (r *RedisClient) SubscribeJobDone(ctx context.Context, jobID string) JobDoneSubscription {
 	ps := r.client.Subscribe(ctx, "job:"+jobID+":done")
-	return &JobDoneSub{ch: ps.Channel(), pubsub: ps}
+	return &jobDoneSub{ch: ps.Channel(), pubsub: ps}
 }
 
 // NotifyJobDone publishes a signal on the job's completion channel to wake up

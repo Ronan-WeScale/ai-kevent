@@ -39,7 +39,7 @@ Images:
 - Gateway:    `ghcr.io/ronan-wescale/ai-kevent/gateway:vX.Y.Z`
 - Dispatcher: `ghcr.io/ronan-wescale/ai-kevent/dispatcher:vX.Y.Z`
 
-Current tags: gateway `v0.2.5`, dispatcher `v0.2.5`.
+Current tags: gateway `v0.3.0`, dispatcher `v0.3.0`.
 
 After tagging, also update:
 1. `helm/gateway/values.yaml` → `image.tag`
@@ -52,31 +52,83 @@ After tagging, also update:
 
 ### Request flow
 
+**Async** (`POST /jobs/{service_type}`):
 ```
 Client
-  │  POST /jobs (multipart)
+  │  POST /jobs/{service_type} (multipart)
   ▼
 Gateway (:8080)
-  ├── Upload file → Scaleway S3 (bucket: test-kevent-jobs)
+  ├── Upload file → S3
   ├── Save job record → Redis (TTL 72h)
-  └── Publish InputEvent → Kafka topic jobs.<type>.input
+  └── Publish InputEvent → Kafka jobs.<model>.input
                                     │
-                              KafkaSource (Knative Eventing)
-                                    │  CloudEvent HTTP POST
+                              KafkaSource async (Knative Eventing)
+                                    │  CloudEvent → POST /
                                     ▼
-                         Dispatcher sidecar (:8080, inside InferenceService pod)
+                         Dispatcher sidecar (:8080)
+                              ├── Check syncPriority flag — if 1, return 503 (KafkaSource retries)
                               ├── Download file from S3
                               ├── POST to local inference model (127.0.0.1:9000)
                               ├── Upload result.json → S3
-                              └── Publish ResultEvent → Kafka topic jobs.<type>.results
+                              └── Publish ResultEvent → jobs.<model>.results
                                                                 │
                                                          Gateway ConsumerManager
-                                                              └── Update Redis → trigger webhook
+                                                              ├── Update Redis
+                                                              ├── Notify Redis pub/sub (job:<id>:done)
+                                                              └── Trigger webhook (if callback_url set)
 ```
 
-### Sync (OpenAI-compatible) mode
+**Sync-over-Kafka** (`POST /v1/*` multipart with `sync_topic` configured):
+```
+Client
+  │  POST /v1/audio/transcriptions (multipart, keep-alive)
+  ▼
+Gateway
+  ├── Upload file → S3
+  ├── Save job → Redis
+  ├── Subscribe Redis pub/sub job:<id>:done  ← before publishing
+  ├── Publish InputEvent → Kafka jobs.<model>.sync
+  └── Wait (Redis pub/sub) ──────────────────────────────────────────────┐
+                                    │                                    │
+                              KafkaSource sync (Knative Eventing)        │
+                                    │  CloudEvent → POST /sync           │
+                                    ▼                                    │
+                         Dispatcher sidecar                              │
+                              ├── Set syncPriority=1 (defers async jobs) │
+                              ├── Process job (S3 → inference → S3)      │
+                              ├── Publish ResultEvent → results topic     │
+                              └── Unset syncPriority=0                   │
+                                                    │                    │
+                                             ConsumerManager             │
+                                                    ├── Update Redis     │
+                                                    └── Notify pub/sub ──┘
+                                                                │
+Gateway continues:
+  ├── Fetch result from S3
+  ├── Return result in HTTP response (200)
+  └── Cleanup (delete S3 file + Redis job)
+```
 
-Gateway also proxies `POST /v1/*` directly to the InferenceService cluster URL (no Kafka), routing by the `model` field in the request body. The dispatcher sidecar forwards `/v1/*` straight to the local inference model. Both are configured via `services[].openai_path`, `services[].model`, `services[].inference_url` in `config.yaml`.
+**Sync direct proxy** (`POST /v1/*` JSON, or multipart without `sync_topic`):
+```
+Gateway → HTTP proxy → InferenceService URL (inference_url in config)
+```
+
+### Sync (OpenAI-compatible) mode — routing summary
+
+| Request | `sync_topic` configured | Path |
+|---|---|---|
+| `multipart/form-data` | yes | Sync-over-Kafka (priority, keep-alive) |
+| `multipart/form-data` | no | Direct proxy to `inference_url` |
+| `application/json` | any | Direct proxy to `inference_url` |
+
+Configured via `services[].sync_topic`, `services[].openai_paths`, `services[].model`, `services[].inference_url` in `config.yaml`.
+
+### Priority mechanism
+
+When a sync job arrives at the dispatcher via `POST /sync`, it sets `syncPriority = 1`. Concurrent async CloudEvents to `POST /` see this flag and return `503 Service Unavailable`. KafkaSource retries them after `backoffDelay` (configured on the async KafkaSource). Once the sync job finishes, the flag is cleared and async jobs proceed normally.
+
+This works across pod scale-out: each pod independently tracks its own sync job. No shared state across pods is needed — each pod that has a sync job defers its own async queue.
 
 ### Config loading
 
