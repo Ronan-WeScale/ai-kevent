@@ -7,6 +7,52 @@ import (
 	"testing"
 )
 
+// ── decodeInputEvent tests ────────────────────────────────────────────────────
+
+// TestDecodeInputEvent_BinaryMode verifies that a plain JSON body (KafkaSource
+// binary mode, the default) is decoded correctly into an InputEvent.
+func TestDecodeInputEvent_BinaryMode(t *testing.T) {
+	body := `{"job_id":"abc-123","service_type":"transcription","model":"whisper-large-v3","input_ref":"abc-123/input.wav","created_at":"2026-03-13T13:00:00Z"}`
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	event, err := decodeInputEvent(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if event.JobID != "abc-123" {
+		t.Errorf("expected job_id abc-123, got %q", event.JobID)
+	}
+}
+
+// TestDecodeInputEvent_StructuredCloudEvent verifies that a structured CloudEvent
+// body (Content-Type: application/cloudevents+json) is unwrapped and the
+// InputEvent is extracted from the "data" field.
+func TestDecodeInputEvent_StructuredCloudEvent(t *testing.T) {
+	body := `{
+		"specversion": "1.0",
+		"id": "550e8400-e29b-41d4-a716-446655440000",
+		"type": "dev.knative.kafka.event",
+		"source": "/apis/v1/namespaces/default/kafkasources/kevent-transcription-sync",
+		"time": "2026-03-13T13:00:00Z",
+		"datacontenttype": "application/json",
+		"data": {"job_id":"abc-123","service_type":"transcription","model":"whisper-large-v3","input_ref":"abc-123/input.wav","created_at":"2026-03-13T13:00:00Z"}
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/sync", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/cloudevents+json")
+
+	event, err := decodeInputEvent(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if event.JobID != "abc-123" {
+		t.Errorf("expected job_id abc-123, got %q", event.JobID)
+	}
+	if event.Model != "whisper-large-v3" {
+		t.Errorf("expected model whisper-large-v3, got %q", event.Model)
+	}
+}
+
 // TestServeHTTP_Returns503WhenSyncActive verifies that the async handler defers
 // jobs with 503 while a sync job is in progress on the same pod.
 func TestServeHTTP_Returns503WhenSyncActive(t *testing.T) {

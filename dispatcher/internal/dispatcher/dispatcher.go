@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -72,8 +74,8 @@ func (d *Dispatcher) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var event model.InputEvent
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&event); err != nil {
+	event, err := decodeInputEvent(r)
+	if err != nil {
 		slog.Warn("failed to decode input event", "error", err)
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
@@ -86,7 +88,7 @@ func (d *Dispatcher) serveHTTP(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("event received", "job_id", event.JobID, "service_type", event.ServiceType, "input_ref", event.InputRef)
 
-	if err := d.process(r.Context(), &event); err != nil {
+	if err := d.process(r.Context(), event); err != nil {
 		slog.Error("transient error, letting KafkaSource retry", "job_id", event.JobID, "error", err)
 		http.Error(w, "transient error", http.StatusInternalServerError)
 		return
@@ -155,6 +157,37 @@ func (d *Dispatcher) process(ctx context.Context, event *model.InputEvent) error
 
 	log.Info("job completed", "result_ref", resultKey)
 	return nil
+}
+
+// decodeInputEvent reads an InputEvent from the HTTP request body.
+// It handles both CloudEvent delivery modes:
+//   - Binary mode (default): body is the raw Kafka message (JSON InputEvent directly)
+//   - Structured mode (Content-Type: application/cloudevents+json): body is a
+//     CloudEvent JSON envelope; the InputEvent is nested inside the "data" field.
+func decodeInputEvent(r *http.Request) (*model.InputEvent, error) {
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(io.LimitReader(r.Body, 1<<20)); err != nil {
+		return nil, fmt.Errorf("reading body: %w", err)
+	}
+
+	payload := buf.Bytes()
+
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/cloudevents+json") {
+		// Structured CloudEvent — InputEvent is nested inside "data".
+		var envelope struct {
+			Data json.RawMessage `json:"data"`
+		}
+		if err := json.Unmarshal(payload, &envelope); err != nil {
+			return nil, fmt.Errorf("structured CloudEvent envelope: %w", err)
+		}
+		payload = envelope.Data
+	}
+
+	var event model.InputEvent
+	if err := json.Unmarshal(payload, &event); err != nil {
+		return nil, err
+	}
+	return &event, nil
 }
 
 func (d *Dispatcher) publishFailure(ctx context.Context, event *model.InputEvent, errMsg string) {
