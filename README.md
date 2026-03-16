@@ -17,17 +17,20 @@ Client
   ▼
 POST /jobs/{service_type} (multipart: file)
   │
-  ├─ 1. Fichier → Scaleway Object Storage (S3)
+  ├─ 1. Fichier → S3
   ├─ 2. Job record → Redis (status: pending)
-  └─ 3. InputEvent → Kafka (topic propre au service)
+  └─ 3. InputEvent → Kafka (jobs.<model>.input)
                           │
                           ▼
-                    KafkaSource → Knative → Relay sidecar → modèle GPU
+                    KafkaSource → POST / → Relay sidecar
                                               │
-                                              └─ ResultEvent → Kafka (result topic)
+                                              ├─ Download fichier S3
+                                              ├─ POST multipart → modèle GPU (127.0.0.1:9000/<path>)
+                                              ├─ Upload result.json → S3
+                                              └─ ResultEvent → Kafka (jobs.<model>.results)
                                                                     │
                                               ┌─────────────────────┘
-                                              │  (consumer interne)
+                                              │  (consumer interne gateway)
                                               ▼
                                        Redis mis à jour (status: completed/failed)
                                        + Webhook POST si callback_url fourni
@@ -39,18 +42,37 @@ GET /jobs/{service_type}/{id}  →  { status, result (inline JSON) }
 
 ### Mode sync (proxy OpenAI-compatible)
 
+Deux chemins selon la configuration :
+
+**A — Sync-over-Kafka** (`sync_topic` configuré, requête `multipart/form-data`) :
 ```
-Client  (SDK OpenAI Python / JS)
+Client  POST /v1/audio/transcriptions  (multipart)
   │
   ▼
-POST /v1/audio/transcriptions   ← field "model" = "whisper-large-v3"
-POST /v1/chat/completions        ← field "model" = "llava-v1.6-mistral-7b"
-  │
-  ▼  (routing par chemin + champ model)
-Gateway SyncHandler
+Gateway
+  ├─ Upload fichier → S3
+  ├─ Subscribe Redis pub/sub  job:<id>:done
+  └─ InputEvent → Kafka (jobs.<model>.sync)   ← topic prioritaire
+                          │
+                    KafkaSource → POST /sync → Relay sidecar
+                                                    │
+                                                    ├─ syncPriority=1 (reporte les jobs async)
+                                                    ├─ Traitement (S3 → modèle → S3)
+                                                    └─ ResultEvent → jobs.<model>.results
+                                                                          │
+                                                               Gateway ConsumerManager
+                                                                    └─ Notify Redis pub/sub
+                                                                              │
+Gateway (débloqué)  ◀────────────────────────────────────────────────────────┘
+  └─ Fetch résultat S3 → HTTP 200 au client
+```
+
+**B — Direct proxy** (requête `application/json`, ou `multipart` sans `sync_topic`) :
+```
+Client  POST /v1/*
   │
   ▼
-Relay Knative  /v1/*  →  modèle GPU (127.0.0.1:9000)
+Gateway → HTTP proxy → inference_url + chemin d'origine → modèle GPU
   │
   ▼ (réponse streamée directement)
 Client
@@ -60,9 +82,9 @@ Client
 
 | Composant | Rôle |
 |---|---|
-| **Kafka** | Bus d'événements (mode async) — port 9093, SASL_SSL + SCRAM-SHA-512 |
-| **Redis** | État des jobs (mode async, TTL configurable) |
-| **Scaleway Object Storage** | Stockage fichiers d'entrée et résultats (mode async) |
+| **Kafka** | Bus d'événements (mode async + sync-over-Kafka) — port 9093, SASL_SSL + SCRAM-SHA-512 |
+| **Redis** | État des jobs et pub/sub pour le mode sync-over-Kafka (TTL configurable) |
+| **S3** | Stockage fichiers d'entrée et résultats |
 
 ---
 
@@ -71,16 +93,19 @@ Client
 ### Prérequis
 
 - Go 1.23+
-- Kafka (SASL_SSL), Redis et un bucket Scaleway accessibles
+- Kafka (SASL_SSL), Redis et un bucket S3-compatible accessibles
 
 ### Build
 
 ```bash
-go mod download
+# Gateway
 go build -o gateway ./cmd/gateway
-./gateway
-# ou avec un chemin de config custom :
 CONFIG_PATH=/etc/kevent/config.yaml ./gateway
+
+# Relay sidecar
+cd relay
+go build -o relay ./cmd/relay
+RESULT_TOPIC=jobs.whisper-large-v3.results ./relay
 ```
 
 ### Docker
@@ -96,27 +121,13 @@ docker run \
   kevent-gateway
 ```
 
-Pour Kafka avec SASL/TLS :
-
-```bash
-docker run \
-  -e S3_ACCESS_KEY=... \
-  -e S3_SECRET_KEY=... \
-  -e KAFKA_BROKERS=kafka:9093 \
-  -e REDIS_ADDR=redis:6379 \
-  -v /path/to/ca.crt:/etc/kafka-tls/ca.crt \
-  -p 8080:8080 \
-  kevent-gateway
-# Les champs kafka.sasl.* et kafka.tls.* sont définis dans config.yaml
-```
-
 ---
 
 ## Configuration
 
 La configuration est lue depuis `config.yaml` (chemin par défaut). Toutes les valeurs de la forme `${VAR:-défaut}` sont substituées depuis l'environnement au démarrage.
 
-### Référence complète
+### Gateway (`config.yaml`)
 
 ```yaml
 server:
@@ -127,75 +138,128 @@ server:
 
 kafka:
   brokers:
-    - "kafka:9093"      # liste des brokers (multi-broker supporté)
+    - "kafka:9093"
   consumer_group: "kevent-gateway"
-  # ── Authentification SASL (optionnel) ────────────────────────────────────
   sasl:
     mechanism: "SCRAM-SHA-512"   # PLAIN | SCRAM-SHA-256 | SCRAM-SHA-512
     username:  "kevent-gateway"
     password:  "${KAFKA_SASL_PASSWORD}"
-  # ── TLS (optionnel, requis si le broker utilise SASL_SSL) ────────────────
   tls:
     enabled:      true
-    ca_cert_path: "/etc/kafka-tls/ca.crt"  # CA Strimzi
+    ca_cert_path: "/etc/kafka-tls/ca.crt"
 
 s3:
-  endpoint: "https://s3.fr-par.scw.cloud"  # Scaleway : https://s3.<région>.scw.cloud
-  region: "fr-par"                          # fr-par | nl-ams | pl-waw
+  endpoint: "https://s3.fr-par.scw.cloud"
+  region: "fr-par"
   access_key: "${S3_ACCESS_KEY}"
   secret_key: "${S3_SECRET_KEY}"
   bucket: "kevent-jobs"
+
+encryption:
+  key: "${ENCRYPTION_KEY:-}"    # AES-256-GCM at-rest, vide = désactivé
 
 redis:
   addr: "redis:6379"
   password: ""
   db: 0
-  job_ttl_hours: 72    # durée de conservation des jobs (3 jours par défaut)
+  job_ttl_hours: 72
 
 services:
   - type: transcription
-    # ── Sync / OpenAI-compatible (optionnel) ──────────────────────────────
     model: "whisper-large-v3"
     openai_paths:
       - "/v1/audio/transcriptions"
       - "/v1/audio/translations"
-    # URL de base — le chemin de la requête d'origine est appendé automatiquement
     inference_url: "http://kevent-transcription-predictor.default.svc.cluster.local"
-    # ── Async / Kafka — topics nommés d'après le modèle ───────────────────
     input_topic: jobs.whisper-large-v3.input
     result_topic: jobs.whisper-large-v3.results
+    # sync_topic: active le mode sync-over-Kafka pour les requêtes multipart sur openai_paths
+    sync_topic: jobs.whisper-large-v3.sync
     accepted_exts: [".mp3", ".wav", ".m4a", ".ogg", ".flac"]
     max_file_size_mb: 500
 
   - type: ocr
-    model: "llava-v1.6-mistral-7b"
+    model: "deepseek-ocr"
     openai_paths:
-      - "/v1/chat/completions"
+      - "/v1/ocr"
+      - "/v1/vision/ocr"
     inference_url: "http://kevent-ocr-predictor.default.svc.cluster.local"
-    input_topic: jobs.llava-v1.6-mistral-7b.input
-    result_topic: jobs.llava-v1.6-mistral-7b.results
+    input_topic: jobs.deepseek-ocr.input
+    result_topic: jobs.deepseek-ocr.results
     accepted_exts: [".pdf", ".jpg", ".jpeg", ".png", ".tiff", ".bmp"]
     max_file_size_mb: 50
 ```
 
-### Variables d'environnement
+### Relay sidecar (`relay/config.yaml`)
+
+```yaml
+service:
+  result_topic: "${RESULT_TOPIC}"   # ex: jobs.whisper-large-v3.results
+
+kafka:
+  brokers: ["${KAFKA_BROKERS:-kafka:9092}"]
+  sasl:
+    mechanism: "${KAFKA_SASL_MECHANISM:-}"
+    username:  "${KAFKA_SASL_USERNAME:-}"
+    password:  "${KAFKA_SASL_PASSWORD:-}"
+  tls:
+    enabled:      ${KAFKA_TLS_ENABLED:-false}
+    ca_cert_path: "${KAFKA_CA_CERT_PATH:-}"
+
+s3:
+  endpoint:   "${S3_ENDPOINT:-https://s3.fr-par.scw.cloud}"
+  region:     "${S3_REGION:-fr-par}"
+  access_key: "${S3_ACCESS_KEY}"
+  secret_key: "${S3_SECRET_KEY}"
+  bucket:     "${S3_BUCKET:-kevent-jobs}"
+
+encryption:
+  key: "${ENCRYPTION_KEY:-}"
+
+# URL de base du container d'inférence local (même pod).
+# Le chemin OpenAI est fourni par le gateway dans InputEvent.inference_url
+# et appendé dynamiquement : base_url + inference_url.
+inference:
+  base_url: "http://127.0.0.1:${INFERENCE_PORT:-9000}"
+  api_key:  ""
+  timeout:  "300s"
+  extra_fields:             # champs form optionnels ajoutés à chaque requête multipart
+    response_format: "json"
+    # language: "fr"
+    # prompt: "..."
+```
+
+### Variables d'environnement (gateway)
 
 | Variable | Valeur par défaut | Description |
 |---|---|---|
 | `CONFIG_PATH` | `config.yaml` | Chemin vers le fichier de configuration |
 | `S3_ENDPOINT` | `https://s3.fr-par.scw.cloud` | Endpoint S3 |
-| `S3_REGION` | `fr-par` | Région Scaleway |
+| `S3_REGION` | `fr-par` | Région |
 | `S3_ACCESS_KEY` | — | Access Key ID (**requis**) |
 | `S3_SECRET_KEY` | — | Secret Key (**requis**) |
 | `S3_BUCKET` | `kevent-jobs` | Nom du bucket |
 | `KAFKA_BROKERS` | `kafka:9092` | Adresse(s) des brokers Kafka |
-| `KAFKA_SASL_PASSWORD` | _(vide)_ | Mot de passe SASL Kafka (expandé dans config.yaml) |
+| `KAFKA_SASL_PASSWORD` | _(vide)_ | Mot de passe SASL Kafka |
 | `REDIS_ADDR` | `redis:6379` | Adresse Redis |
 | `REDIS_PASSWORD` | _(vide)_ | Mot de passe Redis |
-| `TRANSCRIPTION_WHISPER_LARGE_V3_URL` | _(URL cluster locale)_ | URL de base du relay Whisper (mode sync) |
-| `OCR_LLAVA_URL` | _(URL cluster locale)_ | URL de base du relay OCR (mode sync) |
+| `ENCRYPTION_KEY` | _(vide)_ | Clé AES-256-GCM hex-encodée (32 octets) |
 
-> Les variables d'environnement surchargent les valeurs du fichier YAML via la syntaxe `${VAR:-défaut}`.
+### Variables d'environnement (relay sidecar)
+
+| Variable | Valeur par défaut | Description |
+|---|---|---|
+| `RESULT_TOPIC` | — | Topic Kafka résultats (**requis**) |
+| `INFERENCE_PORT` | `9000` | Port du serveur de modèle local |
+| `KAFKA_BROKERS` | `kafka:9092` | Brokers Kafka |
+| `KAFKA_SASL_MECHANISM` | _(vide)_ | Mécanisme SASL |
+| `KAFKA_SASL_USERNAME` | _(vide)_ | Utilisateur SASL |
+| `KAFKA_SASL_PASSWORD` | _(vide)_ | Mot de passe SASL |
+| `KAFKA_TLS_ENABLED` | `false` | Activer TLS |
+| `KAFKA_CA_CERT_PATH` | _(vide)_ | Chemin vers la CA Strimzi |
+| `S3_ACCESS_KEY` | — | Access Key ID (**requis**) |
+| `S3_SECRET_KEY` | — | Secret Key (**requis**) |
+| `ENCRYPTION_KEY` | _(vide)_ | Doit correspondre à la valeur du gateway |
 
 ---
 
@@ -226,13 +290,12 @@ En production (Strimzi) le cluster tourne sur le port **9093** (`SASL_SSL`). Les
 ### Secret SASL (à créer dans le namespace du gateway)
 
 ```bash
-# Copier le secret Strimzi (infra-kafka → default)
 kubectl get secret kevent-gateway -n infra-kafka -o yaml \
   | sed 's/namespace: infra-kafka/namespace: default/' \
   | kubectl apply -f -
 ```
 
-Le secret doit contenir la clé `KAFKA_SASL_PASSWORD` (référencée dans le Helm chart) — **sans newline final** (erreur courante lors de la création manuelle).
+Le secret doit contenir la clé `KAFKA_SASL_PASSWORD` — **sans newline final** (erreur courante lors de la création manuelle).
 
 ---
 
@@ -248,8 +311,8 @@ helm upgrade --install kevent-gateway ./helm/gateway \
 
 ```yaml
 image:
-  repository: tcheksa62/kevent
-  tag: v0.2.5
+  repository: ghcr.io/ronan-wescale/ai-kevent/gateway
+  tag: v0.4.0
 
 kafka:
   brokers: "default-kafka-bootstrap.infra-kafka.svc.cluster.local:9093"
@@ -257,10 +320,10 @@ kafka:
     enabled: true
     mechanism: SCRAM-SHA-512
     username: kevent-gateway
-    existingSecret: "kevent-gateway"   # Secret contenant KAFKA_SASL_PASSWORD
+    existingSecret: "kevent-gateway"
   tls:
     enabled: true
-    existingCACertSecret: "default-cluster-ca-cert"  # CA Strimzi (clé : ca.crt)
+    existingCACertSecret: "default-cluster-ca-cert"
 
 services:
   - type: transcription
@@ -271,6 +334,7 @@ services:
     inferenceURL: "http://kevent-transcription-predictor.default.svc.cluster.local"
     inputTopic: "jobs.whisper-large-v3.input"
     resultTopic: "jobs.whisper-large-v3.results"
+    syncTopic: "jobs.whisper-large-v3.sync"
     acceptedExts: [".mp3", ".wav", ".m4a", ".ogg", ".flac"]
     maxFileSizeMB: 500
 ```
@@ -279,31 +343,36 @@ services:
 
 ## Ajouter un service d'inférence
 
-Aucun changement de code n'est nécessaire. Il suffit d'ajouter un bloc dans `config.yaml` et de redémarrer le gateway :
+Aucun changement de code n'est nécessaire. Il suffit d'ajouter un bloc dans `config.yaml` (gateway) et de déployer un relay sidecar configuré avec le `RESULT_TOPIC` correspondant.
+
+**Gateway `config.yaml`** :
 
 ```yaml
 services:
-  # ... services existants ...
-
-  - type: translation
-    # Sync (si le relay est déployé)
-    model: "nllb-200"
+  - type: diarization
+    model: "pyannote-audio-3.1"
     openai_paths:
-      - "/v1/chat/completions"
-    # URL de base — le chemin d'origine est appendé automatiquement
-    inference_url: "http://kevent-translation-predictor.default.svc.cluster.local"
-    # Async — topics nommés d'après le modèle
-    input_topic: jobs.nllb-200.input
-    result_topic: jobs.nllb-200.results
-    accepted_exts: [".txt", ".pdf", ".docx"]
-    max_file_size_mb: 10
+      - "/v1/audio/diarizations"
+    inference_url: "http://kevent-diarization-predictor.default.svc.cluster.local"
+    input_topic: jobs.pyannote-audio-3.1.input
+    result_topic: jobs.pyannote-audio-3.1.results
+    sync_topic: jobs.pyannote-audio-3.1.sync
+    accepted_exts: [".mp3", ".wav", ".m4a", ".ogg", ".flac"]
+    max_file_size_mb: 500
 ```
 
-Le gateway démarrera automatiquement un consumer Kafka sur `result_topic` et acceptera les soumissions pour ce nouveau type.
+**Relay sidecar** (env vars dans le manifest KServe) :
 
-> **Routing sync multi-modèles** : plusieurs services peuvent partager le même path (ex: `/v1/chat/completions`) — le gateway sélectionne le backend d'après la valeur du champ `model` dans le payload. Un même modèle peut aussi exposer plusieurs paths via `openai_paths`.
+```yaml
+- name: RESULT_TOPIC
+  value: "jobs.pyannote-audio-3.1.results"
+- name: INFERENCE_PORT
+  value: "9000"
+```
 
-> **Pré-requis Kafka** : les topics `input_topic` et `result_topic` doivent être créés avant le démarrage (`AllowAutoTopicCreation: false`).
+> **Routing sync multi-modèles** : plusieurs services peuvent partager le même path (ex: `/v1/audio/transcriptions`) — le gateway sélectionne le backend d'après la valeur du champ `model` dans le payload. Un même modèle peut exposer plusieurs paths via `openai_paths`.
+
+> **Pré-requis Kafka** : les topics `input_topic`, `result_topic` et `sync_topic` doivent être créés avant le démarrage (`AllowAutoTopicCreation: false`).
 
 ---
 
@@ -311,24 +380,18 @@ Le gateway démarrera automatiquement un consumer Kafka sur `result_topic` et ac
 
 ### Mode sync — Endpoints OpenAI-compatibles
 
-Ces endpoints sont exposés si `model`, `openai_paths` et `inference_url` sont configurés pour au moins un service.
-
-Le gateway sélectionne le backend en lisant le champ `model` du payload, puis proxie la requête vers le relay Knative correspondant. La réponse est streamée directement au client — aucun état Redis, aucun S3.
+Ces endpoints sont exposés si `openai_paths` et `inference_url` sont configurés pour au moins un service.
 
 #### `POST /v1/audio/transcriptions` — Transcription audio
-
-Compatible avec le SDK OpenAI Python/JS (même payload que `openai.audio.transcriptions.create`).
 
 **Content-Type** : `multipart/form-data`
 
 | Champ | Type | Requis | Description |
 |---|---|---|---|
-| `model` | string | oui | Identifiant du modèle : `whisper-large-v3` |
+| `model` | string | si plusieurs modèles | Ex: `whisper-large-v3`. Optionnel si un seul modèle pour ce path. |
 | `file` | file | oui | Fichier audio (.mp3, .wav, .m4a, .ogg, .flac) |
 | `language` | string | non | Code langue ISO-639-1 (ex: `fr`, `en`) |
 | `response_format` | string | non | `json` (défaut) \| `text` \| `verbose_json` |
-
-**Exemple**
 
 ```bash
 curl https://api.kevent.example.com/v1/audio/transcriptions \
@@ -342,10 +405,7 @@ curl https://api.kevent.example.com/v1/audio/transcriptions \
 ```python
 from openai import OpenAI
 
-client = OpenAI(
-    base_url="https://api.kevent.example.com",
-    api_key="unused",  # le gateway ne vérifie pas l'api_key (à sécuriser via Ingress)
-)
+client = OpenAI(base_url="https://api.kevent.example.com", api_key="unused")
 
 with open("interview.wav", "rb") as f:
     transcript = client.audio.transcriptions.create(
@@ -358,26 +418,22 @@ print(transcript.text)
 
 ---
 
-#### `POST /v1/chat/completions` — Vision / OCR
+#### `POST /v1/ocr` — OCR (documents, images)
 
-Compatible avec le SDK OpenAI Python/JS (même payload que `openai.chat.completions.create`).
+**Content-Type** : `multipart/form-data`
 
-**Content-Type** : `application/json`
+| Champ | Type | Requis | Description |
+|---|---|---|---|
+| `model` | string | si plusieurs modèles | Ex: `deepseek-ocr` |
+| `file` | file | oui | Document (.pdf, .jpg, .jpeg, .png, .tiff, .bmp) |
+| `prompt` | string | non | Instruction personnalisée |
+| `languages` | string | non | Code(s) langue pour guider l'OCR |
+| `response_format` | string | non | `json` (défaut) |
 
-```json
-{
-  "model": "llava-v1.6-mistral-7b",
-  "messages": [
-    {
-      "role": "user",
-      "content": [
-        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,<...>"}},
-        {"type": "text", "text": "Extrait tout le texte visible dans ce document."}
-      ]
-    }
-  ],
-  "max_tokens": 4096
-}
+```bash
+curl https://api.kevent.example.com/v1/ocr \
+  -F model=deepseek-ocr \
+  -F file=@document.pdf
 ```
 
 ---
@@ -386,13 +442,11 @@ Compatible avec le SDK OpenAI Python/JS (même payload que `openai.chat.completi
 
 #### `POST /jobs/{service_type}` — Soumettre un job
 
-Soumet un fichier pour traitement asynchrone. Le type de service est dans l'URL (`transcription`, `ocr`, …).
-
 **Content-Type** : `multipart/form-data`
 
 | Champ | Type | Requis | Description |
 |---|---|---|---|
-| `model` | string | si plusieurs modèles | Modèle d'inférence (ex: `whisper-large-v3`). Optionnel si un seul modèle est configuré pour le type. |
+| `model` | string | si plusieurs modèles | Ex: `whisper-large-v3`. Optionnel si un seul modèle configuré pour le type. |
 | `file` | file | oui | Fichier à traiter |
 | `callback_url` | string | non | URL appelée en POST à la complétion du job |
 
@@ -402,11 +456,10 @@ Soumet un fichier pour traitement asynchrone. Le type de service est dans l'URL 
 {
   "job_id": "550e8400-e29b-41d4-a716-446655440000",
   "service_type": "transcription",
+  "model": "whisper-large-v3",
   "status": "pending"
 }
 ```
-
-**Exemple**
 
 ```bash
 curl -X POST http://localhost:8080/jobs/transcription \
@@ -419,14 +472,13 @@ curl -X POST http://localhost:8080/jobs/transcription \
 
 #### `GET /jobs/{service_type}/{id}` — Statut d'un job
 
-Retourne l'état courant d'un job et, quand le traitement est terminé, le résultat inline dans la réponse JSON.
-
 **Réponse** `200 OK`
 
 ```json
 {
   "job_id": "550e8400-e29b-41d4-a716-446655440000",
   "service_type": "transcription",
+  "model": "whisper-large-v3",
   "status": "completed",
   "result": { "text": "Bonjour, bienvenue à cette réunion..." },
   "created_at": "2026-03-05T10:00:00Z",
@@ -440,23 +492,15 @@ Retourne l'état courant d'un job et, quand le traitement est terminé, le résu
 | `result` | Payload JSON du résultat d'inférence (présent uniquement si `completed`) |
 | `error` | Message d'erreur (présent uniquement si `failed`) |
 
-**Exemple — polling simple**
+**Polling simple**
 
 ```bash
 JOB_ID="550e8400-e29b-41d4-a716-446655440000"
-
 while true; do
   RESPONSE=$(curl -s http://localhost:8080/jobs/transcription/$JOB_ID)
   STATUS=$(echo $RESPONSE | jq -r '.status')
-
-  if [ "$STATUS" = "completed" ]; then
-    echo $RESPONSE | jq '.result' > result.json
-    break
-  elif [ "$STATUS" = "failed" ]; then
-    echo "Erreur : $(echo $RESPONSE | jq -r '.error')"
-    break
-  fi
-
+  [ "$STATUS" = "completed" ] && echo $RESPONSE | jq '.result' && break
+  [ "$STATUS" = "failed" ]    && echo "Erreur : $(echo $RESPONSE | jq -r '.error')" && break
   sleep 10
 done
 ```
@@ -479,16 +523,19 @@ done
 {
   "job_id": "550e8400-e29b-41d4-a716-446655440000",
   "service_type": "transcription",
+  "model": "whisper-large-v3",
   "input_ref": "550e8400-.../input.wav",
+  "inference_url": "/v1/audio/transcriptions",
   "created_at": "2026-03-05T10:00:00Z"
 }
 ```
 
-Le champ `input_ref` est la clé objet S3 du fichier d'entrée. Le relay doit le lire depuis le bucket configuré.
+| Champ | Description |
+|---|---|
+| `input_ref` | Clé objet S3 du fichier d'entrée |
+| `inference_url` | Chemin OpenAI à appeler sur le modèle local (appendé à `inference.base_url` du relay) |
 
-### ResultEvent — attendu par le gateway sur `result_topic`
-
-Le relay publie ce message quand le traitement est terminé (succès ou échec) :
+### ResultEvent — publié par le relay sur `result_topic`
 
 ```json
 {
@@ -496,7 +543,6 @@ Le relay publie ce message quand le traitement est terminé (succès ou échec) 
   "service_type": "transcription",
   "status": "completed",
   "result_ref": "550e8400-.../result.json",
-  "error": "",
   "completed_at": "2026-03-05T10:04:32Z"
 }
 ```
@@ -512,8 +558,6 @@ Le relay publie ce message quand le traitement est terminé (succès ou échec) 
 ## Webhook (optionnel, mode async)
 
 Si `callback_url` est fourni à la soumission, le gateway effectue un `POST` sur cette URL dès que le job passe à l'état `completed` ou `failed`. En cas d'échec HTTP (5xx ou timeout), 3 tentatives sont faites avec un backoff exponentiel (2 s → 4 s → 8 s).
-
-**Corps de la requête**
 
 ```json
 {
@@ -534,34 +578,31 @@ Si `callback_url` est fourni à la soumission, le gateway effectue un `POST` sur
 ├── cmd/gateway/main.go          # Point d'entrée — wiring et graceful shutdown
 ├── internal/
 │   ├── config/config.go         # Chargement YAML + expansion des variables d'env
-│   │                            # KafkaConfig inclut SASLConfig et TLSConfig
 │   ├── model/job.go             # Types partagés : Job, InputEvent, ResultEvent
-│   ├── service/registry.go      # Registre des services (config-driven, index sync)
+│   ├── service/registry.go      # Registre config-driven (routing sync + async)
 │   ├── storage/
-│   │   ├── s3.go                # Client S3 (AWS SDK v2) — configuré pour Scaleway
+│   │   ├── s3.go                # Client S3 (AWS SDK v2)
 │   │   └── redis.go             # Persistance des jobs (JSON blob + TTL)
 │   ├── kafka/
-│   │   ├── auth.go              # Helpers SASL (PLAIN/SCRAM) + TLS pour Dialer/Transport
-│   │   ├── producer.go          # Producteur Kafka — un writer par topic, lazy init
-│   │   └── consumer.go          # Consumer de résultats — une goroutine par result_topic
+│   │   ├── auth.go              # Helpers SASL (PLAIN/SCRAM) + TLS
+│   │   ├── producer.go          # Producteur Kafka — un writer par topic
+│   │   └── consumer.go          # Consumer résultats — une goroutine par result_topic
 │   └── handler/
-│       ├── jobs.go              # POST /jobs/{service_type}  •  GET /jobs/{service_type}/{id}  (async)
-│       ├── sync.go              # POST /v1/*  (proxy OpenAI-compatible, sync)
+│       ├── jobs.go              # POST /jobs/{service_type}  •  GET /jobs/{service_type}/{id}
+│       ├── sync.go              # POST /v1/*  (sync-over-Kafka ou direct proxy)
 │       ├── health.go            # GET /health
 │       └── middleware.go        # Logger structuré (slog/JSON)
-├── relay/                  # Relay sidecar (module Go séparé)
+├── relay/                       # Relay sidecar (module Go séparé : kevent/relay)
 │   ├── cmd/relay/main.go
 │   ├── internal/
-│   │   ├── config/config.go     # KafkaConfig avec SASLConfig et TLSConfig
-│   │   ├── kafka/
-│   │   │   ├── auth.go          # Helpers SASL + TLS (même logique que le gateway)
-│   │   │   └── publisher.go     # Producteur Kafka — résultats vers result_topic
-│   │   ├── relay/          # Handler CloudEvent, proxy sync, orchestration
-│   │   ├── adapter/             # Adaptateurs par type de service (transcription, ocr…)
+│   │   ├── config/config.go     # Config relay : inference.base_url + extra_fields
+│   │   ├── kafka/               # SASL + TLS, publisher résultats
+│   │   ├── relay/               # Handler CloudEvent (async POST /, sync POST /sync)
+│   │   ├── adapter/             # Adapter multipart générique (model + extra_fields + file)
 │   │   └── storage/             # Client S3
 │   └── config.yaml              # Config template (env vars expansées au démarrage)
-├── helm/gateway/                # Chart Helm du gateway
-├── k8s/                         # Manifestes Kubernetes (KafkaUser, ServingRuntime…)
+├── helm/gateway/                # Chart Helm du gateway (inclut Redis-HA)
+├── k8s/                         # Manifestes Kubernetes (KafkaUser, KafkaSource, ServingRuntime)
 ├── config.yaml                  # Configuration par défaut du gateway
 └── Dockerfile                   # Multi-stage build → image distroless (~10 MB)
 ```
