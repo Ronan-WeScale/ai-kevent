@@ -19,6 +19,9 @@ import (
 	"kevent/gateway/internal/storage"
 )
 
+// version is set at build time via -ldflags "-X main.version=v0.4.1".
+var version = "dev"
+
 func main() {
 	// JSON structured logger — compatible with log aggregators (Loki, Datadog, …).
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
@@ -73,9 +76,10 @@ func main() {
 	r.Use(handler.StructuredLogger(logger))
 	r.Use(chimw.Recoverer)
 
+	spec := handler.GenerateSpec(registry, version)
 	r.Get("/health", handler.Health)
 	r.Get("/docs", handler.DocsUI)
-	r.Get("/openapi.yaml", handler.DocsSpec)
+	r.Get("/openapi.yaml", handler.NewDocsSpec(spec))
 	r.Post("/jobs/{service_type}", jobHandler.Submit)
 	r.Get("/jobs/{service_type}/{id}", jobHandler.GetStatus)
 
