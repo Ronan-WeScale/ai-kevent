@@ -224,6 +224,23 @@ func (h *SyncHandler) handleMultipartViaKafka(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// Cleanup lancé en goroutine quel que soit le chemin de sortie (succès,
+	// échec métier, erreur S3). Sans defer, les early-returns laissaient
+	// result.json et l'entrée Redis orphelins.
+	defer func() {
+		go func() {
+			ctx := context.Background()
+			if job.ResultRef != "" {
+				if err := h.s3.DeleteObject(ctx, job.ResultRef); err != nil {
+					slog.Error("failed to delete sync result", "job_id", jobID, "error", err)
+				}
+			}
+			if err := h.redis.DeleteJob(ctx, jobID); err != nil {
+				slog.Error("failed to delete sync job record", "job_id", jobID, "error", err)
+			}
+		}()
+	}()
+
 	if job.Status == model.JobStatusFailed {
 		writeError(w, http.StatusUnprocessableEntity, job.Error)
 		return
@@ -237,16 +254,6 @@ func (h *SyncHandler) handleMultipartViaKafka(w http.ResponseWriter, r *http.Req
 
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write(result)
-
-	go func(resultRef, jobID string) {
-		ctx := context.Background()
-		if err := h.s3.DeleteObject(ctx, resultRef); err != nil {
-			slog.Error("failed to delete sync result", "job_id", jobID, "error", err)
-		}
-		if err := h.redis.DeleteJob(ctx, jobID); err != nil {
-			slog.Error("failed to delete sync job record", "job_id", jobID, "error", err)
-		}
-	}(job.ResultRef, jobID)
 }
 
 // proxyToInference forwards the request body directly to the inference backend.

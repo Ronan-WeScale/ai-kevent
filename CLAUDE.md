@@ -39,7 +39,7 @@ Images:
 - Gateway:    `ghcr.io/ronan-wescale/ai-kevent/gateway:vX.Y.Z`
 - Relay: `ghcr.io/ronan-wescale/ai-kevent/relay:vX.Y.Z`
 
-Current tags: gateway `v0.4.2`, relay `v0.4.0`.
+Current tags: gateway `v0.4.3`, relay `v0.4.2`.
 
 After tagging, also update:
 1. `helm/gateway/values.yaml` → `image.tag`
@@ -152,7 +152,7 @@ operations:
 - `GET /openapi.yaml` — raw spec
 - `GET /docs` — Swagger UI
 
-Version injected at build time: `go build -ldflags "-X main.version=v0.4.2" ./cmd/gateway`.
+Version injected at build time: `go build -ldflags "-X main.version=v0.4.3" ./cmd/gateway`.
 
 ### Priority mechanism
 

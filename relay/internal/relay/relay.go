@@ -94,7 +94,16 @@ func (d *Dispatcher) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Confirmer le succès à KafkaSource AVANT de supprimer le fichier d'entrée.
+	// Si la suppression est faite avant, un eviction entre DeleteObject et
+	// WriteHeader entraîne un retry KafkaSource sur un fichier déjà disparu (404).
 	w.WriteHeader(http.StatusOK)
+
+	go func() {
+		if err := d.s3.DeleteObject(context.Background(), event.InputRef); err != nil {
+			slog.Error("failed to delete input file", "job_id", event.JobID, "input_ref", event.InputRef, "error", err)
+		}
+	}()
 }
 
 // process orchestre le pipeline complet. Il retourne une erreur uniquement pour
@@ -150,11 +159,6 @@ func (d *Dispatcher) process(ctx context.Context, event *model.InputEvent) error
 		// Le résultat est persisté en S3. On logue l'erreur mais on ne retente
 		// pas le job entier : le gateway pourra interroger S3 directement si besoin.
 		log.Error("failed to publish result event", "error", err)
-	}
-
-	// Supprimer le fichier d'entrée maintenant que le résultat est stocké.
-	if err := d.s3.DeleteObject(ctx, event.InputRef); err != nil {
-		log.Error("failed to delete input file", "input_ref", event.InputRef, "error", err)
 	}
 
 	log.Info("job completed", "result_ref", resultKey)
