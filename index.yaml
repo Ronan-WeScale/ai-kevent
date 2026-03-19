@@ -3,6 +3,20 @@ entries:
   kevent-gateway:
   - apiVersion: v2
     appVersion: 0.4.2
+    created: "2026-03-19T08:22:34.227696984Z"
+    dependencies:
+    - name: redis-ha
+      repository: https://dandydeveloper.github.io/charts
+      version: 4.35.10
+    description: API gateway for kevent inference jobs
+    digest: 2ce1865f9e0b11faeada9310b638ebc147057f7fdc75c3986e4b22cbd8d5c258
+    name: kevent-gateway
+    type: application
+    urls:
+    - https://github.com/Ronan-WeScale/ai-kevent/releases/download/kevent-gateway-0.4.3/kevent-gateway-0.4.3.tgz
+    version: 0.4.3
+  - apiVersion: v2
+    appVersion: 0.4.2
     created: "2026-03-16T17:03:24.22451574Z"
     dependencies:
     - name: redis-ha
@@ -141,4 +155,4 @@ entries:
     urls:
     - https://github.com/Ronan-WeScale/ai-kevent/releases/download/kevent-gateway-0.2.0/kevent-gateway-0.2.0.tgz
     version: 0.2.0
-generated: "2026-03-16T17:03:24.224561075Z"
+generated: "2026-03-19T08:22:34.227762246Z"
