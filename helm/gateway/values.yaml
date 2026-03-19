@@ -46,6 +46,7 @@ kafka:
     # Option B : référencer un Secret existant (ex: copie du secret Strimzi kevent-gateway)
     #   Le Secret doit contenir la clé KAFKA_SASL_PASSWORD.
     existingSecret: ""
+    secretKey: ""
   tls:
     enabled: false
     # Secret contenant la CA du cluster Strimzi (clé : ca.crt).

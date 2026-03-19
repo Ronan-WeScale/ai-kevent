@@ -50,7 +50,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: {{ include "kevent-gateway.kafkaSecretName" . }}
-                  key: KAFKA_SASL_PASSWORD
+                  key: {{ default "KAFKA_SASL_PASSWORD" .Values.kafka.sasl.secretKey }}
             {{- end }}
             {{- if or .Values.encryption.key .Values.encryption.existingSecret }}
             - name: ENCRYPTION_KEY
