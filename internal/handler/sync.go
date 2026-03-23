@@ -165,6 +165,19 @@ func (h *SyncHandler) handleMultipartViaKafka(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// Collect extra form fields to forward to the inference API.
+	reserved := map[string]bool{"model": true, "file": true}
+	var params map[string]string
+	for k, values := range r.MultipartForm.Value {
+		if reserved[k] || len(values) == 0 {
+			continue
+		}
+		if params == nil {
+			params = make(map[string]string)
+		}
+		params[k] = values[0]
+	}
+
 	jobID := uuid.New().String()
 	ext := filepath.Ext(header.Filename)
 	inputRef := fmt.Sprintf("%s/input%s", jobID, ext)
@@ -201,6 +214,7 @@ func (h *SyncHandler) handleMultipartViaKafka(w http.ResponseWriter, r *http.Req
 		Model:        def.Model,
 		InputRef:     inputRef,
 		InferenceURL: r.URL.Path, // exact path the client called (e.g. /v1/audio/transcriptions)
+		Params:       params,
 		CreatedAt:    now,
 	}
 	if err := h.producer.PublishInputEvent(r.Context(), def.SyncTopic, event); err != nil {

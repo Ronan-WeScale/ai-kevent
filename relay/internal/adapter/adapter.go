@@ -14,10 +14,11 @@ type CallInput struct {
 	JobID        string
 	Filename     string
 	ContentType  string
-	Size         int64     // -1 if unknown
-	Body         io.Reader // stream from S3; caller closes
-	Model        string    // model name from InputEvent (e.g. "whisper-large-v3")
-	InferenceURL string    // OpenAI path from InputEvent (e.g. "/v1/audio/transcriptions")
+	Size         int64             // -1 if unknown
+	Body         io.Reader         // stream from S3; caller closes
+	Model        string            // model name from InputEvent (e.g. "whisper-large-v3")
+	InferenceURL string            // OpenAI path from InputEvent (e.g. "/v1/audio/transcriptions")
+	Params       map[string]string // extra form fields forwarded from the client request
 }
 
 // Adapter sends an inference request to the local model and returns the raw JSON response.

@@ -39,7 +39,7 @@ Images:
 - Gateway:    `ghcr.io/ronan-wescale/ai-kevent/gateway:vX.Y.Z`
 - Relay: `ghcr.io/ronan-wescale/ai-kevent/relay:vX.Y.Z`
 
-Current tags: gateway `v0.4.3`, relay `v0.4.2`.
+Current tags: gateway `v0.4.4`, relay `v0.4.3`.
 
 After tagging, also update:
 1. `helm/gateway/values.yaml` → `image.tag`

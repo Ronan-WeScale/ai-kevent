@@ -35,14 +35,21 @@ func (a *multipartAdapter) Call(ctx context.Context, input CallInput) ([]byte, e
 					return err
 				}
 			}
-			// Write extra_fields in deterministic order.
-			keys := make([]string, 0, len(a.inf.ExtraFields))
-			for k := range a.inf.ExtraFields {
+			// Merge extra_fields (config) and Params (request); Params take precedence.
+			merged := make(map[string]string, len(a.inf.ExtraFields)+len(input.Params))
+			for k, v := range a.inf.ExtraFields {
+				merged[k] = v
+			}
+			for k, v := range input.Params {
+				merged[k] = v
+			}
+			keys := make([]string, 0, len(merged))
+			for k := range merged {
 				keys = append(keys, k)
 			}
 			sort.Strings(keys)
 			for _, k := range keys {
-				if v := a.inf.ExtraFields[k]; v != "" {
+				if v := merged[k]; v != "" {
 					if err := mw.WriteField(k, v); err != nil {
 						return err
 					}

@@ -105,6 +105,20 @@ func (h *JobHandler) Submit(w http.ResponseWriter, r *http.Request) {
 
 	callbackURL := r.FormValue("callback_url")
 
+	// Collect extra form fields to forward to the inference API.
+	// Reserved gateway fields are excluded.
+	reserved := map[string]bool{"model": true, "file": true, "callback_url": true, "operation": true}
+	var params map[string]string
+	for k, values := range r.MultipartForm.Value {
+		if reserved[k] || len(values) == 0 {
+			continue
+		}
+		if params == nil {
+			params = make(map[string]string)
+		}
+		params[k] = values[0]
+	}
+
 	jobID := uuid.New().String()
 	ext := filepath.Ext(header.Filename)
 	inputRef := fmt.Sprintf("%s/input%s", jobID, ext) // e.g. "abc123/input.wav"
@@ -149,6 +163,7 @@ func (h *JobHandler) Submit(w http.ResponseWriter, r *http.Request) {
 		Model:        def.Model,
 		InputRef:     inputRef,
 		InferenceURL: inferenceURL,
+		Params:       params,
 		CreatedAt:    now,
 	}
 	if err := h.producer.PublishInputEvent(r.Context(), def.InputTopic, event); err != nil {

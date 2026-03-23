@@ -16,6 +16,14 @@ Versioning: each component is versioned independently — see tag conventions be
 
 ## Gateway
 
+### [v0.4.4] — 2026-03-23
+
+#### Added
+- Extra form fields (e.g. `vad_parameters`) are now forwarded end-to-end in all modes: gateway collects non-reserved fields from the multipart form, stores them in `InputEvent.Params`, and the relay injects them into the multipart request sent to the inference API
+- `Params` override `extra_fields` from relay config when both define the same key
+
+---
+
 ### [v0.3.0] — 2026-03-13
 
 #### Added
@@ -74,6 +82,14 @@ Versioning: each component is versioned independently — see tag conventions be
 ---
 
 ## Relay
+
+### [v0.4.3] — 2026-03-23
+
+#### Added
+- `InputEvent.Params` forwarded into the multipart request to the inference API
+- `Params` (from request) merged with `extra_fields` (from config), request params take precedence
+
+---
 
 ### [v0.3.0] — 2026-03-13
 

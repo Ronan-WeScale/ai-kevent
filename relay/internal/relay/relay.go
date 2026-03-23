@@ -129,6 +129,7 @@ func (d *Dispatcher) process(ctx context.Context, event *model.InputEvent) error
 		Body:         body,
 		Model:        event.Model,
 		InferenceURL: event.InferenceURL,
+		Params:       event.Params,
 	})
 	if err != nil {
 		// Échec métier (modèle, fichier invalide…) : on publie le failure et on

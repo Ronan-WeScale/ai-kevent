@@ -12,12 +12,13 @@ const (
 // InputEvent is consumed from the model-specific input Kafka topic.
 // Published by the gateway when a job is submitted.
 type InputEvent struct {
-	JobID        string    `json:"job_id"`
-	ServiceType  string    `json:"service_type"`
-	Model        string    `json:"model"`
-	InputRef     string    `json:"input_ref"`     // S3 object key: "{job_id}/input.ext"
-	InferenceURL string    `json:"inference_url"` // OpenAI path the relay must append to its local base URL
-	CreatedAt    time.Time `json:"created_at"`
+	JobID        string            `json:"job_id"`
+	ServiceType  string            `json:"service_type"`
+	Model        string            `json:"model"`
+	InputRef     string            `json:"input_ref"`        // S3 object key: "{job_id}/input.ext"
+	InferenceURL string            `json:"inference_url"`    // OpenAI path the relay must append to its local base URL
+	Params       map[string]string `json:"params,omitempty"` // extra form fields forwarded to the inference API
+	CreatedAt    time.Time         `json:"created_at"`
 }
 
 // ResultEvent is published to the service-specific result Kafka topic.
