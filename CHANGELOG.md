@@ -16,6 +16,14 @@ Versioning: each component is versioned independently — see tag conventions be
 
 ## Gateway
 
+### [v0.4.5] — 2026-03-24
+
+#### Fixed
+- Sync-over-Kafka: send HTTP 200 + headers immediately on connection open, then write a JSON-whitespace newline every 20 s while waiting for the relay result. Prevents APISix/nginx from dropping the TCP connection during long inferences ("upstream prematurely closed connection while reading response header")
+- Remove duplicate `Content-Type` header set at end of `handleMultipartViaKafka`
+
+---
+
 ### [v0.4.4] — 2026-03-23
 
 #### Added
@@ -82,6 +90,13 @@ Versioning: each component is versioned independently — see tag conventions be
 ---
 
 ## Relay
+
+### [v0.4.4] — 2026-03-24
+
+#### Fixed
+- Use `context.Background()` when publishing failure result events and deleting the input file after inference errors. Prevents silent loss of result notifications when the Knative request context is cancelled (e.g. `timeoutSeconds` exceeded), which would leave the gateway waiting indefinitely
+
+---
 
 ### [v0.4.3] — 2026-03-23
 
