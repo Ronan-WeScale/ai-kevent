@@ -136,9 +136,9 @@ func (c *Config) applyDefaults() {
 	if c.Server.ReadTimeout == 0 {
 		c.Server.ReadTimeout = 120 * time.Second
 	}
-	if c.Server.WriteTimeout == 0 {
-		c.Server.WriteTimeout = 60 * time.Second
-	}
+	// WriteTimeout has no default: 0 means no timeout, which is correct for a
+	// gateway that handles long-running sync-over-Kafka jobs (OCR, large audio).
+	// Set explicitly in config if a hard limit is desired.
 	if c.Server.IdleTimeout == 0 {
 		c.Server.IdleTimeout = 120 * time.Second
 	}
