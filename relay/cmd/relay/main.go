@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"os/signal"
@@ -81,7 +82,17 @@ func main() {
 	// Sets syncPriority flag so async jobs on the same pod are deferred (503).
 	mux.HandleFunc("/sync", disp.ServeHTTPSync)
 
-	mux.Handle("/", disp) // async CloudEvent handler (KafkaSource → POST /)
+	// / — async CloudEvent handler for KafkaSource (always POSTs to exactly "/").
+	// Any other path (e.g. /v1/audio/transcriptions) is a direct inference request
+	// from the gateway sync-direct path; proxy it straight to the local model.
+	inferenceProxy := newInferenceProxy(cfg.Inference.BaseURL)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			inferenceProxy.ServeHTTP(w, r)
+			return
+		}
+		disp.ServeHTTP(w, r)
+	})
 
 	srv := &http.Server{
 		Addr:        ":8080",
@@ -122,6 +133,19 @@ func main() {
 	}
 
 	slog.Info("server stopped")
+}
+
+// newInferenceProxy returns a reverse proxy that forwards requests to the local
+// inference model (base_url). Used for sync-direct requests that arrive on paths
+// other than "/" (which is reserved for async CloudEvents from KafkaSource).
+func newInferenceProxy(baseURL string) *httputil.ReverseProxy {
+	target, err := url.Parse(baseURL)
+	if err != nil {
+		slog.Error("invalid inference base_url for proxy", "url", baseURL, "error", err)
+		// Return a proxy that always errors; the process should have exited earlier.
+		target = &url.URL{Scheme: "http", Host: "127.0.0.1:9000"}
+	}
+	return httputil.NewSingleHostReverseProxy(target)
 }
 
 // inferenceHostPort extracts host:port from inference.base_url (e.g. "127.0.0.1:9000").
