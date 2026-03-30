@@ -17,7 +17,7 @@ Helm chart for the **kevent** API gateway — accepts file uploads, enqueues the
 The chart is published automatically to GitHub Pages on every push to `main` that changes `helm/`.
 
 ```bash
-helm repo add kevent https://ronan-wescale.github.io/ai-kevent
+helm repo add kevent https://ia-generative.github.io/kevent-ai
 helm repo update
 helm install kevent-gateway kevent/kevent-gateway -f values.yaml
 ```

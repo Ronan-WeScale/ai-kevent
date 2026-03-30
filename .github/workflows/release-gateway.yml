@@ -6,7 +6,7 @@ on:
       - "gateway/v*"
 
 env:
-  IMAGE: ghcr.io/${{ github.repository_owner }}/ai-kevent/gateway
+  IMAGE: ghcr.io/${{ github.repository_owner }}/kevent-ai/gateway
 
 jobs:
   release:

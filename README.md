@@ -330,7 +330,7 @@ helm upgrade --install kevent-gateway ./helm/gateway \
 
 ```yaml
 image:
-  repository: ghcr.io/ronan-wescale/ai-kevent/gateway
+  repository: ghcr.io/ia-generative/kevent-ai/gateway
   tag: v0.4.2
 
 kafka:

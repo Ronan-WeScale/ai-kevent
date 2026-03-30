@@ -36,8 +36,8 @@ git tag relay/vX.Y.Z && git push origin relay/vX.Y.Z
 ```
 
 Images:
-- Gateway:    `ghcr.io/ronan-wescale/ai-kevent/gateway:vX.Y.Z`
-- Relay: `ghcr.io/ronan-wescale/ai-kevent/relay:vX.Y.Z`
+- Gateway:    `ghcr.io/ia-generative/kevent-ai/gateway:vX.Y.Z`
+- Relay: `ghcr.io/ia-generative/kevent-ai/relay:vX.Y.Z`
 
 Current tags: gateway `v0.4.8`, relay `v0.4.5`.
 
@@ -214,11 +214,11 @@ kubectl get secret kevent-relay-kafka -n default \
 
 Helm chart deploys the gateway with Redis-HA (HAProxy front-end). The relay runs as a sidecar in the `ServingRuntime` (KServe), not managed by Helm.
 
-The Helm chart is published to GitHub Pages at `https://ronan-wescale.github.io/ai-kevent` (auto-updated on push to `main` when `helm/` changes). The `gh-pages` branch must exist in the repository.
+The Helm chart is published to GitHub Pages at `https://ia-generative.github.io/kevent-ai` (auto-updated on push to `main` when `helm/` changes). The `gh-pages` branch must exist in the repository.
 
 ```bash
 # Add Helm repo
-helm repo add kevent https://ronan-wescale.github.io/ai-kevent
+helm repo add kevent https://ia-generative.github.io/kevent-ai
 helm repo update
 helm install kevent-gateway kevent/kevent-gateway -f values.yaml
 

@@ -100,7 +100,7 @@ Versioning: each component is versioned independently — see tag conventions be
 - Kafka topics renamed from `jobs.<type>.*` to `jobs.<model>.*`
 - `registry.RouteAsync(serviceType, model)` replaces `registry.Route(serviceType)` — supports multi-model types
 - `MaxFileSizeForType` used for `MaxBytesReader` before multipart parse (maximum across all models for the type)
-- Docker image moved to `ghcr.io/ronan-wescale/ai-kevent/gateway`
+- Docker image moved to `ghcr.io/ia-generative/kevent-ai/gateway`
 
 ### [v0.2.4] — 2026-01-XX
 
@@ -173,7 +173,7 @@ Versioning: each component is versioned independently — see tag conventions be
 - `result_topic` auto-derived from active model: `jobs.<model>.results` when left empty
 
 #### Changed
-- Docker image moved to `ghcr.io/ronan-wescale/ai-kevent/relay`
+- Docker image moved to `ghcr.io/ia-generative/kevent-ai/relay`
 
 ### [v0.2.4] — 2026-01-XX
 
