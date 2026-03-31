@@ -16,6 +16,13 @@ Versioning: each component is versioned independently — see tag conventions be
 
 ## Gateway
 
+### [v0.4.10] — 2026-03-31
+
+#### Fixed
+- `kevent_requests_total` now recorded on sync-direct path (`proxyToInference`) with `mode="sync-direct"`
+
+---
+
 ### [v0.4.9] — 2026-03-30
 
 #### Added
@@ -128,6 +135,14 @@ Versioning: each component is versioned independently — see tag conventions be
 
 ## Relay
 
+### [v0.4.7] — 2026-03-31
+
+#### Added
+- `kevent_relay_proxy_requests_total` (counter, labels: `service_type`, `status`) — sync-direct requests proxied to the local model
+- `kevent_relay_proxy_duration_seconds` (histogram, label: `service_type`) — sync-direct proxy latency
+
+---
+
 ### [v0.4.6] — 2026-03-30
 
 #### Added
@@ -214,6 +229,14 @@ Versioning: each component is versioned independently — see tag conventions be
 ---
 
 ## Helm chart (kevent-gateway)
+
+### [0.5.1] — 2026-03-31
+
+#### Changed
+- `image.tag` bumped to `v0.4.10` (gateway sync-direct metrics fix)
+- `appVersion` bumped to `v0.4.10`
+
+---
 
 ### [0.5.0] — 2026-03-30
 
