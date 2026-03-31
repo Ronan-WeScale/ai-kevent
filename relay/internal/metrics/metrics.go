@@ -59,4 +59,17 @@ var (
 		Name: "kevent_relay_kafka_publish_errors_total",
 		Help: "Total number of Kafka result-event publish errors.",
 	})
+
+	// ProxyRequestsTotal counts sync-direct requests proxied to the local model.
+	ProxyRequestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "kevent_relay_proxy_requests_total",
+		Help: "Total number of sync-direct requests proxied to the local inference model.",
+	}, []string{"service_type", "status"})
+
+	// ProxyDuration measures the duration of sync-direct proxy requests.
+	ProxyDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "kevent_relay_proxy_duration_seconds",
+		Help:    "Sync-direct proxy request duration in seconds.",
+		Buckets: []float64{.1, .5, 1, 5, 10, 30, 60, 120, 300},
+	}, []string{"service_type"})
 )

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -16,9 +17,9 @@ import (
 
 	"kevent/relay/internal/adapter"
 	"kevent/relay/internal/config"
-	_ "kevent/relay/internal/metrics" // register Prometheus metrics
-	"kevent/relay/internal/relay"
 	"kevent/relay/internal/kafka"
+	"kevent/relay/internal/metrics"
+	"kevent/relay/internal/relay"
 	"kevent/relay/internal/storage"
 )
 
@@ -90,9 +91,14 @@ func main() {
 	// Any other path (e.g. /v1/audio/transcriptions) is a direct inference request
 	// from the gateway sync-direct path; proxy it straight to the local model.
 	inferenceProxy := newInferenceProxy(cfg.Inference.BaseURL)
+	serviceType := os.Getenv("SERVICE_TYPE")
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
-			inferenceProxy.ServeHTTP(w, r)
+			start := time.Now()
+			rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+			inferenceProxy.ServeHTTP(rec, r)
+			metrics.ProxyRequestsTotal.WithLabelValues(serviceType, fmt.Sprintf("%d", rec.status)).Inc()
+			metrics.ProxyDuration.WithLabelValues(serviceType).Observe(time.Since(start).Seconds())
 			return
 		}
 		disp.ServeHTTP(w, r)
@@ -150,6 +156,17 @@ func newInferenceProxy(baseURL string) *httputil.ReverseProxy {
 		target = &url.URL{Scheme: "http", Host: "127.0.0.1:9000"}
 	}
 	return httputil.NewSingleHostReverseProxy(target)
+}
+
+// statusRecorder wraps http.ResponseWriter to capture the written status code.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
 }
 
 // inferenceHostPort extracts host:port from inference.base_url (e.g. "127.0.0.1:9000").
