@@ -16,6 +16,14 @@ Versioning: each component is versioned independently — see tag conventions be
 
 ## Gateway
 
+### [v0.4.16] — 2026-04-02
+
+#### Fixed
+- `/docs` `$ref` resolver errors: serve service specs at `/docs/spec/{type}/{model}` (under the `/docs*` gateway prefix) instead of blob URLs — `swagger-client` cannot resolve fragment refs against `blob:` base URLs
+- Remove 404 link to non-existent `swagger-ui-standalone-preset.css`
+
+---
+
 ### [v0.4.15] — 2026-04-02
 
 #### Fixed
@@ -272,6 +280,13 @@ Versioning: each component is versioned independently — see tag conventions be
 ---
 
 ## Helm chart (kevent-gateway)
+
+### [0.5.9] — 2026-04-02
+
+#### Changed
+- `appVersion` / `image.tag` → `v0.4.16`
+
+---
 
 ### [0.5.8] — 2026-04-02
 
