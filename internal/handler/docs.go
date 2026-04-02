@@ -64,23 +64,23 @@ func NewDocsSpec(spec []byte) http.HandlerFunc {
 }
 
 // DocsUI serves the Swagger UI at GET /docs.
-// Service specs are embedded directly in the HTML as blob URLs so the browser
-// never makes additional HTTP requests — only /openapi.yaml is fetched externally.
+// Service specs are served under /docs/spec/{type}/{model}, which stays within
+// the /docs* path prefix exposed by the API gateway.
 func DocsUI(specs []SwaggerSpec) http.HandlerFunc {
-	// Build a JS snippet that creates blob URLs from inlined spec JSON strings,
-	// then appends them to the urls array used by Swagger UI.
-	// This avoids any browser fetch to /swagger/* routes.
-	var blobJS strings.Builder
-	blobJS.WriteString("const _urls = [{ name: \"Gateway (jobs async + sync)\", url: \"/openapi.yaml\" }];\n")
-	for _, s := range specs {
-		nameJSON, _ := json.Marshal(s.Type + " / " + s.Model)
-		specJSON, _ := json.Marshal(string(s.Data)) // safely escape spec as JS string
-		blobJS.WriteString("_urls.push({ name: ")
-		blobJS.Write(nameJSON)
-		blobJS.WriteString(", url: URL.createObjectURL(new Blob([")
-		blobJS.Write(specJSON)
-		blobJS.WriteString("], { type: \"application/json\" })) });\n")
+	type urlEntry struct {
+		Name string `json:"name"`
+		URL  string `json:"url"`
 	}
+	entries := []urlEntry{
+		{Name: "Gateway (jobs async + sync)", URL: "/openapi.yaml"},
+	}
+	for _, s := range specs {
+		entries = append(entries, urlEntry{
+			Name: s.Type + " / " + s.Model,
+			URL:  "/docs/spec/" + s.Type + "/" + s.Model,
+		})
+	}
+	urlsJSON, _ := json.Marshal(entries)
 
 	html := `<!DOCTYPE html>
 <html lang="en">
@@ -89,16 +89,14 @@ func DocsUI(specs []SwaggerSpec) http.HandlerFunc {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Kevent API</title>
   <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist/swagger-ui.css" />
-  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist/swagger-ui-standalone-preset.css" />
 </head>
 <body>
   <div id="swagger-ui"></div>
   <script src="https://unpkg.com/swagger-ui-dist/swagger-ui-bundle.js"></script>
   <script src="https://unpkg.com/swagger-ui-dist/swagger-ui-standalone-preset.js"></script>
   <script>
-    ` + blobJS.String() + `
     SwaggerUIBundle({
-      urls: _urls,
+      urls: ` + string(urlsJSON) + `,
       "urls.primaryName": "Gateway (jobs async + sync)",
       dom_id: "#swagger-ui",
       presets: [SwaggerUIBundle.presets.apis, SwaggerUIStandalonePreset],

@@ -89,7 +89,7 @@ func main() {
 	r.Get("/metrics", promhttp.Handler().ServeHTTP)
 	r.Get("/docs", handler.DocsUI(swaggerSpecs))
 	r.Get("/openapi.yaml", handler.NewDocsSpec(spec))
-	r.Get("/swagger/{type}/{model}", handler.NewSwaggerHandler(swaggerSpecs))
+	r.Get("/docs/spec/{type}/{model}", handler.NewSwaggerHandler(swaggerSpecs))
 	r.Post("/jobs/{service_type}", jobHandler.Submit)
 	r.Get("/jobs/{service_type}/{id}", jobHandler.GetStatus)
 
