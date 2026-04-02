@@ -16,6 +16,13 @@ Versioning: each component is versioned independently — see tag conventions be
 
 ## Gateway
 
+### [v0.4.13] — 2026-04-02
+
+#### Fixed
+- Swagger UI `/docs` showing "no api definition provided": switch from `BaseLayout` to `StandaloneLayout` — the `urls[]` multi-spec dropdown is a Topbar feature exclusive to `StandaloneLayout`
+
+---
+
 ### [v0.4.12] — 2026-04-02
 
 #### Added
@@ -251,6 +258,13 @@ Versioning: each component is versioned independently — see tag conventions be
 ---
 
 ## Helm chart (kevent-gateway)
+
+### [0.5.6] — 2026-04-02
+
+#### Changed
+- `appVersion` / `image.tag` → `v0.4.13`
+
+---
 
 ### [0.5.5] — 2026-04-02
 
