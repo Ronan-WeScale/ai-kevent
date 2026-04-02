@@ -16,6 +16,13 @@ Versioning: each component is versioned independently — see tag conventions be
 
 ## Gateway
 
+### [v0.4.18] — 2026-04-02
+
+#### Changed
+- Swagger UI `/docs`: inference endpoints now grouped by service type (`audio`, `ocr`, …) instead of a single "Inference" section — tags are built dynamically from the registry
+
+---
+
 ### [v0.4.17] — 2026-04-02
 
 #### Added
@@ -289,6 +296,13 @@ Versioning: each component is versioned independently — see tag conventions be
 ---
 
 ## Helm chart (kevent-gateway)
+
+### [0.5.11] — 2026-04-02
+
+#### Changed
+- `appVersion` / `image.tag` → `v0.4.18`
+
+---
 
 ### [0.5.10] — 2026-04-02
 
