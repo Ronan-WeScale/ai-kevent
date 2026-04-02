@@ -149,8 +149,9 @@ func TestDocsUI_ContainsSwaggerURLs(t *testing.T) {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
 	body := w.Body.String()
-	if !contains(body, "/swagger/audio/whisper-large-v3") {
-		t.Error("expected swagger URL for whisper in docs HTML")
+	// Spec is embedded as a blob URL — no /swagger/* fetch needed from the browser.
+	if !contains(body, "createObjectURL") {
+		t.Error("expected blob URL creation for whisper spec in docs HTML")
 	}
 	if !contains(body, "/openapi.yaml") {
 		t.Error("expected gateway openapi.yaml URL in docs HTML")

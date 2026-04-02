@@ -64,23 +64,23 @@ func NewDocsSpec(spec []byte) http.HandlerFunc {
 }
 
 // DocsUI serves the Swagger UI at GET /docs.
-// specs is the list of pre-fetched service OpenAPI specs; they appear as additional
-// entries in the Swagger UI dropdown alongside the gateway's own spec.
+// Service specs are embedded directly in the HTML as blob URLs so the browser
+// never makes additional HTTP requests — only /openapi.yaml is fetched externally.
 func DocsUI(specs []SwaggerSpec) http.HandlerFunc {
-	// Build the Swagger UI urls array. Gateway spec is always first (primary).
-	type urlEntry struct {
-		Name string `json:"name"`
-		URL  string `json:"url"`
-	}
-	entries := []urlEntry{
-		{Name: "Gateway (jobs async + sync)", URL: "/openapi.yaml"},
-	}
-	// Group by type for readable names: "audio / whisper-large-v3"
+	// Build a JS snippet that creates blob URLs from inlined spec JSON strings,
+	// then appends them to the urls array used by Swagger UI.
+	// This avoids any browser fetch to /swagger/* routes.
+	var blobJS strings.Builder
+	blobJS.WriteString("const _urls = [{ name: \"Gateway (jobs async + sync)\", url: \"/openapi.yaml\" }];\n")
 	for _, s := range specs {
-		name := s.Type + " / " + s.Model
-		entries = append(entries, urlEntry{Name: name, URL: "/swagger/" + s.Type + "/" + s.Model})
+		nameJSON, _ := json.Marshal(s.Type + " / " + s.Model)
+		specJSON, _ := json.Marshal(string(s.Data)) // safely escape spec as JS string
+		blobJS.WriteString("_urls.push({ name: ")
+		blobJS.Write(nameJSON)
+		blobJS.WriteString(", url: URL.createObjectURL(new Blob([")
+		blobJS.Write(specJSON)
+		blobJS.WriteString("], { type: \"application/json\" })) });\n")
 	}
-	urlsJSON, _ := json.Marshal(entries)
 
 	html := `<!DOCTYPE html>
 <html lang="en">
@@ -96,8 +96,9 @@ func DocsUI(specs []SwaggerSpec) http.HandlerFunc {
   <script src="https://unpkg.com/swagger-ui-dist/swagger-ui-bundle.js"></script>
   <script src="https://unpkg.com/swagger-ui-dist/swagger-ui-standalone-preset.js"></script>
   <script>
+    ` + blobJS.String() + `
     SwaggerUIBundle({
-      urls: ` + string(urlsJSON) + `,
+      urls: _urls,
       "urls.primaryName": "Gateway (jobs async + sync)",
       dom_id: "#swagger-ui",
       presets: [SwaggerUIBundle.presets.apis, SwaggerUIStandalonePreset],
