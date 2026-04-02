@@ -43,10 +43,7 @@ func GenerateSpec(reg *service.Registry, appVersion string) []byte {
 				"**Sync mode** — OpenAI-compatible endpoints, response held open until inference is done.",
 		},
 		"servers": []any{map[string]any{"url": "/"}},
-		"tags": []any{
-			map[string]any{"name": "Jobs", "description": "Async job submission and status"},
-			map[string]any{"name": "Inference", "description": "Synchronous OpenAI-compatible inference endpoints"},
-		},
+		"tags":    specTags(reg),
 		// Global security: all endpoints require the API key unless overridden.
 		"security": []any{
 			map[string]any{"ApiKeyAuth": []any{}},
@@ -57,6 +54,29 @@ func GenerateSpec(reg *service.Registry, appVersion string) []byte {
 
 	out, _ := yaml.Marshal(spec)
 	return out
+}
+
+// specTags builds the OpenAPI tags array: one "Jobs" tag + one tag per sync service type.
+func specTags(reg *service.Registry) []any {
+	tags := []any{
+		map[string]any{"name": "Jobs", "description": "Async job submission and status"},
+	}
+	// Collect unique service types that have sync endpoints, in sorted order.
+	seen := map[string]bool{}
+	types := reg.Types()
+	sort.Strings(types)
+	for _, t := range types {
+		for _, def := range reg.All() {
+			if def.Type == t && len(def.Operations) > 0 && !seen[t] {
+				seen[t] = true
+				tags = append(tags, map[string]any{
+					"name":        t,
+					"description": fmt.Sprintf("Synchronous inference — %s services", t),
+				})
+			}
+		}
+	}
+	return tags
 }
 
 // NewDocsSpec returns a handler that serves the pre-generated OpenAPI spec.
@@ -291,6 +311,7 @@ func listModelsPathItem() map[string]any {
 // service definitions. Pattern paths (containing {model}) get a path parameter.
 func syncPathItems(reg *service.Registry) map[string]any {
 	type entry struct {
+		serviceType  string
 		models       []string
 		opNames      []string
 		exts         []string
@@ -311,7 +332,10 @@ func syncPathItems(reg *service.Registry) map[string]any {
 				}
 				e := byPath[p]
 				if e == nil {
-					e = &entry{isPattern: strings.Contains(p, "{model}")}
+					e = &entry{
+						serviceType: def.Type,
+						isPattern:   strings.Contains(p, "{model}"),
+					}
 					byPath[p] = e
 				}
 				e.models = appendUniq(e.models, def.Model)
@@ -379,7 +403,7 @@ func syncPathItems(reg *service.Registry) map[string]any {
 		}
 
 		op := map[string]any{
-			"tags":        []string{"Inference"},
+			"tags":        []string{e.serviceType},
 			"summary":     summary,
 			"description": desc,
 			"requestBody": map[string]any{
