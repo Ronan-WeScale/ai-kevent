@@ -16,6 +16,13 @@ Versioning: each component is versioned independently — see tag conventions be
 
 ## Gateway
 
+### [v0.4.15] — 2026-04-02
+
+#### Fixed
+- `/docs` no longer fetches `/swagger/{type}/{model}` from the browser — service specs are now embedded inline in the HTML and exposed as blob URLs, so only `/openapi.yaml` is requested externally
+
+---
+
 ### [v0.4.14] — 2026-04-02
 
 #### Fixed
@@ -265,6 +272,13 @@ Versioning: each component is versioned independently — see tag conventions be
 ---
 
 ## Helm chart (kevent-gateway)
+
+### [0.5.8] — 2026-04-02
+
+#### Changed
+- `appVersion` / `image.tag` → `v0.4.15`
+
+---
 
 ### [0.5.7] — 2026-04-02
 
