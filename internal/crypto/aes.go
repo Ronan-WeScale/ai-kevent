@@ -1,3 +1,6 @@
+// Keep in sync with relay/internal/crypto/aes.go — both files are intentionally
+// identical (separate Go modules cannot share packages directly).
+
 // Package crypto provides streaming AES-256-GCM encryption/decryption for S3
 // objects. Files are split into 64 KB plaintext chunks; each chunk is
 // independently sealed with AES-GCM so the stream can be decrypted without

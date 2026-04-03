@@ -43,6 +43,12 @@ type eventProducer interface {
 	PublishInputEvent(ctx context.Context, topic string, event *model.InputEvent) error
 }
 
+// reservedSyncFields are multipart form fields consumed by the gateway
+// and excluded from the params map forwarded to the inference API.
+var reservedSyncFields = map[string]bool{
+	"model": true, "file": true,
+}
+
 // SyncHandler handles OpenAI-compatible POST /v1/* requests.
 //
 // Routing strategy:
@@ -135,8 +141,14 @@ func (h *SyncHandler) handleJSON(w http.ResponseWriter, r *http.Request) {
 	var payload struct {
 		Model string `json:"model"`
 	}
-	_ = json.Unmarshal(raw, &payload)
 	// model may be empty for path-pattern routes (e.g. /v2/models/{model}/infer).
+	// Report malformed JSON bodies; an empty body is treated as no model specified.
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
+			return
+		}
+	}
 	def, err := h.registry.RouteSync(r.URL.Path, payload.Model)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -174,10 +186,9 @@ func (h *SyncHandler) handleMultipartViaKafka(w http.ResponseWriter, r *http.Req
 	}
 
 	// Collect extra form fields to forward to the inference API.
-	reserved := map[string]bool{"model": true, "file": true}
 	var params map[string]string
 	for k, values := range r.MultipartForm.Value {
-		if reserved[k] || len(values) == 0 {
+		if reservedSyncFields[k] || len(values) == 0 {
 			continue
 		}
 		if params == nil {
@@ -227,6 +238,16 @@ func (h *SyncHandler) handleMultipartViaKafka(w http.ResponseWriter, r *http.Req
 	}
 	if err := h.producer.PublishInputEvent(r.Context(), def.SyncTopic, event); err != nil {
 		slog.ErrorContext(r.Context(), "kafka publish failed", "job_id", jobID, "error", err)
+		// Clean up the orphaned S3 file and Redis record.
+		go func() {
+			ctx := context.Background()
+			if derr := h.s3.DeleteObject(ctx, inputRef); derr != nil {
+				slog.Error("failed to delete orphaned sync input", "job_id", jobID, "error", derr)
+			}
+			if derr := h.redis.DeleteJob(ctx, jobID); derr != nil {
+				slog.Error("failed to delete orphaned sync job", "job_id", jobID, "error", derr)
+			}
+		}()
 		writeError(w, http.StatusInternalServerError, "failed to enqueue job")
 		return
 	}

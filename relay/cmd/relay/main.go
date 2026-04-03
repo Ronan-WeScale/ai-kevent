@@ -150,10 +150,9 @@ func main() {
 // other than "/" (which is reserved for async CloudEvents from KafkaSource).
 func newInferenceProxy(baseURL string) *httputil.ReverseProxy {
 	target, err := url.Parse(baseURL)
-	if err != nil {
-		slog.Error("invalid inference base_url for proxy", "url", baseURL, "error", err)
-		// Return a proxy that always errors; the process should have exited earlier.
-		target = &url.URL{Scheme: "http", Host: "127.0.0.1:9000"}
+	if err != nil || target.Host == "" {
+		slog.Error("invalid inference base_url — cannot start proxy", "url", baseURL, "error", err)
+		os.Exit(1)
 	}
 	return httputil.NewSingleHostReverseProxy(target)
 }

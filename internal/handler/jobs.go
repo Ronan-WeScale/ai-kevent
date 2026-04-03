@@ -12,28 +12,38 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"kevent/gateway/internal/kafka"
 	"kevent/gateway/internal/metrics"
 	"kevent/gateway/internal/model"
 	"kevent/gateway/internal/service"
-	"kevent/gateway/internal/storage"
 )
 
+// asyncJobStore is the subset of storage.RedisClient used by JobHandler.
+type asyncJobStore interface {
+	SaveJob(ctx context.Context, job *model.Job) error
+	GetJob(ctx context.Context, id string) (*model.Job, error)
+	DeleteJob(ctx context.Context, id string) error
+	UpdateJobResult(ctx context.Context, jobID string, status model.JobStatus, resultRef, errMsg string) error
+}
 
+// reservedJobFields are multipart form fields consumed by the gateway
+// and excluded from the params map forwarded to the inference API.
+var reservedJobFields = map[string]bool{
+	"model": true, "file": true, "callback_url": true, "operation": true,
+}
 
 // JobHandler handles job submission and status queries.
 type JobHandler struct {
 	registry *service.Registry
-	store    *storage.S3Client
-	redis    *storage.RedisClient
-	producer *kafka.Producer
+	store    s3Store        // reuses the interface defined in sync.go
+	redis    asyncJobStore
+	producer eventProducer // reuses the interface defined in sync.go
 }
 
 func NewJobHandler(
 	registry *service.Registry,
-	store *storage.S3Client,
-	redis *storage.RedisClient,
-	producer *kafka.Producer,
+	store s3Store,
+	redis asyncJobStore,
+	producer eventProducer,
 ) *JobHandler {
 	return &JobHandler{registry, store, redis, producer}
 }
@@ -115,10 +125,9 @@ func (h *JobHandler) Submit(w http.ResponseWriter, r *http.Request) {
 
 	// Collect extra form fields to forward to the inference API.
 	// Reserved gateway fields are excluded.
-	reserved := map[string]bool{"model": true, "file": true, "callback_url": true, "operation": true}
 	var params map[string]string
 	for k, values := range r.MultipartForm.Value {
-		if reserved[k] || len(values) == 0 {
+		if reservedJobFields[k] || len(values) == 0 {
 			continue
 		}
 		if params == nil {
@@ -178,6 +187,12 @@ func (h *JobHandler) Submit(w http.ResponseWriter, r *http.Request) {
 		slog.ErrorContext(r.Context(), "kafka publish failed", "job_id", jobID, "error", err)
 		// Mark the job as failed so the client can react instead of polling forever.
 		_ = h.redis.UpdateJobResult(r.Context(), jobID, model.JobStatusFailed, "", "failed to enqueue")
+		// Clean up the orphaned S3 input file — it will never be consumed.
+		go func() {
+			if derr := h.store.DeleteObject(context.Background(), inputRef); derr != nil {
+				slog.Error("failed to delete orphaned input after publish failure", "job_id", jobID, "error", derr)
+			}
+		}()
 		writeError(w, http.StatusInternalServerError, "failed to enqueue job, please retry")
 		return
 	}

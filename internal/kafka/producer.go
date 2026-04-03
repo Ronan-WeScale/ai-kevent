@@ -15,11 +15,12 @@ import (
 )
 
 // Producer manages one kafka-go Writer per topic, created lazily on first use.
-// Writers are thread-safe; the internal map is protected by a mutex.
+// Writers are thread-safe; the internal map is protected by a read-write mutex
+// so the hot path (topic already exists) uses only a read lock.
 type Producer struct {
 	brokers   []string
 	transport *kafkago.Transport
-	mu        sync.Mutex
+	mu        sync.RWMutex
 	writers   map[string]*kafkago.Writer
 }
 
@@ -36,15 +37,24 @@ func NewProducer(cfg config.KafkaConfig) (*Producer, error) {
 }
 
 // writerFor returns an existing writer or creates a new one for the topic.
+// The fast path (topic already initialised) holds only a read lock.
 func (p *Producer) writerFor(topic string) *kafkago.Writer {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if w, ok := p.writers[topic]; ok {
+	p.mu.RLock()
+	w, ok := p.writers[topic]
+	p.mu.RUnlock()
+	if ok {
 		return w
 	}
 
-	w := &kafkago.Writer{
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	// Double-check: another goroutine may have created the writer between the
+	// RUnlock and Lock above.
+	if w, ok = p.writers[topic]; ok {
+		return w
+	}
+
+	w = &kafkago.Writer{
 		Addr:  kafkago.TCP(p.brokers...),
 		Topic: topic,
 		// Hash balancer ensures messages with the same job_id land on the same

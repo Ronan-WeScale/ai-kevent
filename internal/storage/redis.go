@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -81,18 +82,39 @@ func (r *RedisClient) DeleteJob(ctx context.Context, id string) error {
 	return nil
 }
 
-// UpdateJobResult updates a job's status, result reference, and error message
-// after the inference worker publishes its result event.
+// updateJobScript atomically reads a job JSON, patches status/result_ref/error/updated_at,
+// and re-writes it with the same TTL — avoiding the read-modify-write race of GetJob+SaveJob.
+var updateJobScript = redis.NewScript(`
+local data = redis.call('GET', KEYS[1])
+if not data then
+    return redis.error_reply('job not found: ' .. KEYS[1])
+end
+local job = cjson.decode(data)
+job['status']     = ARGV[1]
+job['result_ref'] = ARGV[2]
+job['error']      = ARGV[3]
+job['updated_at'] = ARGV[4]
+redis.call('SET', KEYS[1], cjson.encode(job), 'EX', tonumber(ARGV[5]))
+return redis.status_reply('OK')
+`)
+
+// UpdateJobResult atomically updates a job's status, result reference, and error
+// message after the inference worker publishes its result event.
+// Uses a Lua script so the read-modify-write is executed without a race window.
 func (r *RedisClient) UpdateJobResult(ctx context.Context, jobID string, status model.JobStatus, resultRef, errMsg string) error {
-	job, err := r.GetJob(ctx, jobID)
-	if err != nil {
-		return err
+	updatedAt := time.Now().UTC().Format(time.RFC3339Nano)
+	ttlSecs := int64(r.jobTTL.Seconds())
+	if ttlSecs <= 0 {
+		ttlSecs = 3600
 	}
-	job.Status = status
-	job.ResultRef = resultRef
-	job.Error = errMsg
-	job.UpdatedAt = time.Now().UTC()
-	return r.SaveJob(ctx, job)
+	err := updateJobScript.Run(ctx, r.client,
+		[]string{jobKey(jobID)},
+		string(status), resultRef, errMsg, updatedAt, ttlSecs,
+	).Err()
+	if err != nil {
+		return fmt.Errorf("updating job %q in redis: %w", jobID, err)
+	}
+	return nil
 }
 
 // JobDoneSubscription is the interface returned by SubscribeJobDone.
@@ -129,5 +151,7 @@ func (r *RedisClient) SubscribeJobDone(ctx context.Context, jobID string) JobDon
 // NotifyJobDone publishes a signal on the job's completion channel to wake up
 // any sync handler waiting via SubscribeJobDone.
 func (r *RedisClient) NotifyJobDone(ctx context.Context, jobID string) {
-	_ = r.client.Publish(ctx, "job:"+jobID+":done", "1").Err()
+	if err := r.client.Publish(ctx, "job:"+jobID+":done", "1").Err(); err != nil {
+		slog.ErrorContext(ctx, "failed to notify job done", "job_id", jobID, "error", err)
+	}
 }

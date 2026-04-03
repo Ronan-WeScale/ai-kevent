@@ -112,8 +112,9 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	var consumerManager *kafka.ConsumerManager
 	if registry.HasKafkaServices() {
-		consumerManager, err := kafka.NewConsumerManager(cfg.Kafka, registry, redisClient, s3Client, logger)
+		consumerManager, err = kafka.NewConsumerManager(cfg.Kafka, registry, redisClient, s3Client, logger)
 		if err != nil {
 			slog.Error("failed to initialise Kafka consumer manager", "error", err)
 			os.Exit(1)
@@ -151,6 +152,10 @@ func main() {
 
 	slog.Info("shutting down…")
 	cancel() // stop all Kafka consumers
+
+	if consumerManager != nil {
+		consumerManager.Wait() // drain in-flight consumers and webhooks
+	}
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()

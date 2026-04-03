@@ -16,6 +16,23 @@ Versioning: each component is versioned independently — see tag conventions be
 
 ## Gateway
 
+### [v0.5.0] — 2026-04-03
+
+#### Changed
+- `UpdateJobResult` is now atomic: replaced `GetJob + SaveJob` with a Lua script to eliminate the read-modify-write race window under concurrent consumers
+- `Producer.writerFor` uses `sync.RWMutex` — hot path (existing writer) acquires only a read lock
+- `ConsumerManager` exposes `Wait()` backed by a `sync.WaitGroup`; `main` now drains consumers and in-flight webhooks before `Shutdown`
+- Webhook goroutines are tracked in the same `WaitGroup` (no longer fire-and-forget on shutdown)
+- `JobHandler` depends on `s3Store`, `asyncJobStore`, `eventProducer` interfaces instead of concrete types
+
+#### Fixed
+- S3 input file and Redis record are now cleaned up when Kafka publish fails in both `Submit` and the sync handler (previously orphaned indefinitely)
+- `NotifyJobDone` logs Redis publish errors instead of silently discarding them
+- Malformed JSON bodies on `POST /v1/*` now return HTTP 400 instead of routing with an empty model
+- Per-request `reserved` maps moved to package-level variables
+
+---
+
 ### [v0.4.18] — 2026-04-02
 
 #### Changed

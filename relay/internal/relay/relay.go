@@ -149,7 +149,13 @@ func (d *Dispatcher) process(ctx context.Context, event *model.InputEvent) error
 		log.Error("inference failed", "error", err)
 		metrics.JobsTotal.WithLabelValues(event.ServiceType, "failed").Inc()
 		bgCtx := context.Background()
-		d.publishFailure(bgCtx, event, fmt.Sprintf("inference: %v", err))
+		if perr := d.publishFailure(bgCtx, event, fmt.Sprintf("inference: %v", err)); perr != nil {
+			// Kafka unavailable: return an error so KafkaSource retries the job.
+			// The input file is kept in S3 so the retry can re-download it.
+			// On retry, inference will fail again and we'll attempt to publish
+			// the failure event once Kafka recovers.
+			return fmt.Errorf("publishing failure event: %w", perr)
+		}
 		if derr := d.s3.DeleteObject(bgCtx, event.InputRef); derr != nil {
 			log.Error("failed to delete input file after failure", "input_ref", event.InputRef, "error", derr)
 		}
@@ -187,12 +193,10 @@ func (d *Dispatcher) process(ctx context.Context, event *model.InputEvent) error
 //   - Structured mode (Content-Type: application/cloudevents+json): body is a
 //     CloudEvent JSON envelope; the InputEvent is nested inside the "data" field.
 func decodeInputEvent(r *http.Request) (*model.InputEvent, error) {
-	var buf bytes.Buffer
-	if _, err := buf.ReadFrom(io.LimitReader(r.Body, 1<<20)); err != nil {
+	payload, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
 		return nil, fmt.Errorf("reading body: %w", err)
 	}
-
-	payload := buf.Bytes()
 
 	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/cloudevents+json") {
 		// Structured CloudEvent — InputEvent is nested inside "data".
@@ -212,7 +216,7 @@ func decodeInputEvent(r *http.Request) (*model.InputEvent, error) {
 	return &event, nil
 }
 
-func (d *Dispatcher) publishFailure(ctx context.Context, event *model.InputEvent, errMsg string) {
+func (d *Dispatcher) publishFailure(ctx context.Context, event *model.InputEvent, errMsg string) error {
 	resultEvent := &model.ResultEvent{
 		JobID:       event.JobID,
 		ServiceType: event.ServiceType,
@@ -222,5 +226,7 @@ func (d *Dispatcher) publishFailure(ctx context.Context, event *model.InputEvent
 	}
 	if err := d.publisher.PublishResultEvent(ctx, d.resultTopic, resultEvent); err != nil {
 		slog.Error("failed to publish failure event", "job_id", event.JobID, "error", err)
+		return err
 	}
+	return nil
 }

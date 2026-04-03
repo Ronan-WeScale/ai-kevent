@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	kafkago "github.com/segmentio/kafka-go"
@@ -24,6 +25,7 @@ const (
 
 // ConsumerManager starts one consumer goroutine per registered service result topic.
 // It updates job state in Redis and optionally sends webhook notifications.
+// Call Wait() after cancelling the context to drain all in-flight goroutines.
 type ConsumerManager struct {
 	cfg        config.KafkaConfig
 	dialer     *kafkago.Dialer
@@ -32,6 +34,7 @@ type ConsumerManager struct {
 	s3         *storage.S3Client
 	logger     *slog.Logger
 	httpClient *http.Client
+	wg         sync.WaitGroup // tracks consumer goroutines + in-flight webhook goroutines
 }
 
 func NewConsumerManager(
@@ -60,11 +63,22 @@ func NewConsumerManager(
 
 // Start launches one goroutine per registered service's result topic.
 // Services without a result topic (sync-direct only) are skipped.
-// All goroutines stop when ctx is cancelled.
+// All goroutines stop when ctx is cancelled; call Wait to drain them.
 func (cm *ConsumerManager) Start(ctx context.Context) {
 	for _, def := range cm.registry.KafkaServices() {
-		go cm.consume(ctx, def.ResultTopic, def.Type)
+		topic, serviceType := def.ResultTopic, def.Type
+		cm.wg.Add(1)
+		go func() {
+			defer cm.wg.Done()
+			cm.consume(ctx, topic, serviceType)
+		}()
 	}
+}
+
+// Wait blocks until all consumer goroutines and in-flight webhook goroutines have exited.
+// Call after cancelling the context passed to Start.
+func (cm *ConsumerManager) Wait() {
+	cm.wg.Wait()
 }
 
 func (cm *ConsumerManager) consume(ctx context.Context, topic, serviceType string) {
@@ -136,7 +150,11 @@ func (cm *ConsumerManager) handleResult(ctx context.Context, raw []byte) error {
 	cm.redis.NotifyJobDone(ctx, event.JobID)
 
 	if job.CallbackURL != "" {
-		go cm.sendWebhook(job)
+		cm.wg.Add(1)
+		go func(j *model.Job) {
+			defer cm.wg.Done()
+			cm.sendWebhook(j)
+		}(job)
 	}
 
 	return nil
