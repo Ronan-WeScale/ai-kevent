@@ -944,7 +944,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "sum by (inference_service) (revision_queue_depth{inference_service=~\"$inference_service\"})",
+          "expr": "sum by (inference_service) (kn_serving_queue_depth{inference_service=~\"$inference_service\"})",
           "legendFormat": "{{inference_service}}",
           "refId": "A"
         }
@@ -967,7 +967,7 @@
             "stacking": { "group": "A", "mode": "none" },
             "thresholdsStyle": { "mode": "off" }
           },
-          "unit": "ms"
+          "unit": "s"
         },
         "overrides": []
       },
@@ -982,19 +982,19 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "histogram_quantile(0.50, sum by (le, inference_service) (rate(revision_app_request_latencies_bucket{inference_service=~\"$inference_service\"}[5m])))",
+          "expr": "histogram_quantile(0.50, sum by (le, inference_service) (rate(kn_serving_invocation_duration_seconds_bucket{inference_service=~\"$inference_service\"}[5m])))",
           "legendFormat": "p50 {{inference_service}}",
           "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "histogram_quantile(0.95, sum by (le, inference_service) (rate(revision_app_request_latencies_bucket{inference_service=~\"$inference_service\"}[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le, inference_service) (rate(kn_serving_invocation_duration_seconds_bucket{inference_service=~\"$inference_service\"}[5m])))",
           "legendFormat": "p95 {{inference_service}}",
           "refId": "B"
         },
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "histogram_quantile(0.99, sum by (le, inference_service) (rate(revision_app_request_latencies_bucket{inference_service=~\"$inference_service\"}[5m])))",
+          "expr": "histogram_quantile(0.99, sum by (le, inference_service) (rate(kn_serving_invocation_duration_seconds_bucket{inference_service=~\"$inference_service\"}[5m])))",
           "legendFormat": "p99 {{inference_service}}",
           "refId": "C"
         }
