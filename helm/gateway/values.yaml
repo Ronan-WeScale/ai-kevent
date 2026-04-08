@@ -208,3 +208,16 @@ resources: {}
 nodeSelector: {}
 tolerations: []
 affinity: {}
+
+# ── Variables d'environnement supplémentaires ─────────────────────────────────
+# Injectées telles quelles dans le container gateway, après les variables gérées
+# par le chart. Accepte toute syntaxe Kubernetes (value, valueFrom, secretKeyRef…).
+# Exemple pour un token GitHub stocké dans un Secret :
+#
+# extraEnvVars:
+#   - name: GITHUB_TOKEN
+#     valueFrom:
+#       secretKeyRef:
+#         name: github-token
+#         key: token
+extraEnvVars: []
