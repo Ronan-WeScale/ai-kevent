@@ -52,7 +52,7 @@ Gateway (:8080)
 | Parameter | Description | Default |
 |---|---|---|
 | `image.repository` | Gateway image | `ghcr.io/ia-generative/kevent-ai/gateway` |
-| `image.tag` | Image tag | `v0.4.11` |
+| `image.tag` | Image tag | `v0.5.2` |
 | `image.pullPolicy` | Pull policy | `IfNotPresent` |
 
 ### Config
@@ -157,6 +157,47 @@ services:
 | `acceptedExts` | Allowed file extensions (e.g. `[".mp3", ".wav"]`). Empty or absent = all extensions accepted. |
 | `maxFileSizeMB` | Maximum upload size in MB. `0` or absent = 100 MB default. |
 | `swaggerURL` | Optional URL to an OpenAPI JSON spec for this service (e.g. raw GitHub URL). Fetched once at startup; served at `GET /swagger/{type}/{model}` and shown in the `/docs` dropdown. Failures are logged and skipped — startup is never blocked. |
+| `swaggerHeaders` | Optional map of HTTP headers sent when fetching `swaggerURL`. Values support `${VAR}` env expansion. Useful for private GitHub release assets: `Accept: application/octet-stream` + `Authorization: Bearer ${GITHUB_TOKEN}`. |
+
+### Extra environment variables
+
+Arbitrary environment variables injected into the gateway container after the chart-managed ones. Accepts any Kubernetes env syntax (`value`, `valueFrom`, `secretKeyRef`, …).
+
+| Parameter | Description | Default |
+|---|---|---|
+| `extraEnvVars` | List of additional env var entries | `[]` |
+
+Example — inject a GitHub token from an existing Secret (used by `swaggerHeaders`):
+
+```yaml
+extraEnvVars:
+  - name: GITHUB_TOKEN
+    valueFrom:
+      secretKeyRef:
+        name: github-token
+        key: token
+```
+
+### Config hot reload
+
+The gateway exposes `POST /-/reload` to reload its configuration at runtime. Calling this endpoint re-reads `config.yaml`, rebuilds the service registry, Swagger specs, OpenAPI spec, and routing table, and reconciles Kafka consumers (stops consumers for removed topics, starts consumers for added topics) — without pod restart.
+
+> **Note:** S3, Redis, and Kafka connection parameters are not reloaded. Adding a new Kafka service via hot reload will start its consumer immediately; removing one will stop it gracefully.
+
+The chart can deploy a [`configmap-reload`](https://github.com/jimmidyson/configmap-reload) sidecar that watches the ConfigMap volume and triggers `/-/reload` automatically whenever the ConfigMap is updated (e.g. via GitOps or `kubectl edit`).
+
+| Parameter | Description | Default |
+|---|---|---|
+| `configReloader.enabled` | Deploy the configmap-reload sidecar | `false` |
+| `configReloader.image` | Sidecar image | `ghcr.io/jimmidyson/configmap-reload:v0.14.0` |
+| `configReloader.listenPort` | Port for the sidecar metrics/health server | `9533` |
+
+Example:
+
+```yaml
+configReloader:
+  enabled: true
+```
 
 ### Redis HA
 
@@ -202,10 +243,11 @@ POST /v1/<operation-path>
 ### Other endpoints
 
 ```
-GET /health        → { "status": "ok", "time": "..." }
-GET /metrics       → Prometheus text format
-GET /openapi.yaml  → OpenAPI 3.0.3 spec (generated at startup from registry)
-GET /docs          → Swagger UI
+GET  /health        → { "status": "ok", "time": "..." }
+GET  /metrics       → Prometheus text format
+GET  /openapi.yaml  → OpenAPI 3.0.3 spec (generated at startup from registry)
+GET  /docs          → Swagger UI
+POST /-/reload      → reload config at runtime (204 on success, 500 on error)
 ```
 
 ## Monitoring (Prometheus Operator)
@@ -307,3 +349,10 @@ The generated secret (`kevent-gateway` in `infra-kafka`) must be copied to the g
 - Services without `inputTopic`/`resultTopic` are now valid (sync-direct only mode); `kafka.brokers` is no longer required when no service uses Kafka topics
 - `acceptedExts` empty = all extensions accepted (previously would reject all files)
 - `maxFileSizeMB: 0` or absent = 100 MB default (previously 0 meant no limit)
+
+### 0.5.x → 0.5.15
+
+- `swaggerHeaders` field added per service — optional HTTP headers for authenticated `swaggerURL` fetching
+- `extraEnvVars` added — inject arbitrary env vars (e.g. secrets) into the gateway container
+- `configReloader` section added — optional `configmap-reload` sidecar for automatic hot reload on ConfigMap update
+- `POST /-/reload` endpoint: reloads services, Swagger specs, OpenAPI spec, and Kafka consumers at runtime
