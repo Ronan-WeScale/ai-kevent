@@ -16,6 +16,6 @@ func NewReloadHandler(fn func() error) http.HandlerFunc {
 			return
 		}
 		slog.Info("config reloaded successfully")
-		w.WriteHeader(http.StatusNoContent)
+		w.WriteHeader(http.StatusOK)
 	}
 }
