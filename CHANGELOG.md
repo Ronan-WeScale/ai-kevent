@@ -16,6 +16,13 @@ Versioning: each component is versioned independently — see tag conventions be
 
 ## Gateway
 
+### [v0.5.3] — 2026-04-09
+
+#### Fixed
+- `POST /-/reload` now returns HTTP 200 instead of 204 — `configmap-reload` sidecar expects 200 and was treating 204 as an error.
+
+---
+
 ### [v0.5.2] — 2026-04-09
 
 #### Added

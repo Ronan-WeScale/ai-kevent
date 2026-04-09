@@ -2,8 +2,8 @@ apiVersion: v2
 name: kevent-gateway
 description: API gateway for kevent inference jobs
 type: application
-version: 0.5.16
-appVersion: "v0.5.2"
+version: 0.5.17
+appVersion: "v0.5.3"
 
 dependencies:
   - name: redis-ha
