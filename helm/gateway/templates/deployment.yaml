@@ -90,15 +90,6 @@ spec:
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-      volumes:
-        - name: config
-          configMap:
-            name: {{ include "kevent-gateway.configMapName" . }}
-        {{- if .Values.kafka.tls.enabled }}
-        - name: kafka-tls
-          secret:
-            secretName: {{ .Values.kafka.tls.existingCACertSecret }}
-        {{- end }}
         {{- if .Values.configReloader.enabled }}
         - name: config-reloader
           image: "{{ .Values.configReloader.image }}"
@@ -110,6 +101,15 @@ spec:
             - name: config
               mountPath: /etc/kevent
               readOnly: true
+        {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "kevent-gateway.configMapName" . }}
+        {{- if .Values.kafka.tls.enabled }}
+        - name: kafka-tls
+          secret:
+            secretName: {{ .Values.kafka.tls.existingCACertSecret }}
         {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
