@@ -729,3 +729,7 @@ scrape_configs:
 ├── config.yaml                  # Configuration par défaut du gateway
 └── Dockerfile                   # Multi-stage build → image distroless (~10 MB)
 ```
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the gitflow, branch conventions, and release process.
