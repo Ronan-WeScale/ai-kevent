@@ -44,7 +44,7 @@ func buildRouter(
 	logger *slog.Logger,
 	reloadFn func() error,
 ) *chi.Mux {
-	jobHandler := handler.NewJobHandler(reg, s3Client, redisClient, producer)
+	jobHandler := handler.NewJobHandler(reg, s3Client, redisClient, producer, cfg.Server.PriorityHeader)
 
 	r := chi.NewRouter()
 	r.Use(chimw.RequestID)

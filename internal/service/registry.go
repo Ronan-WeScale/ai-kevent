@@ -21,9 +21,10 @@ type Def struct {
 	MaxFileSizeMB int64
 
 	// Sync / OpenAI-compatible mode (optional).
-	InferenceURL string              // full URL of the backend endpoint (direct proxy fallback)
-	Operations   map[string][]string // operation name → URL paths (all indexed; first used for async)
-	SyncTopic    string              // Kafka topic for priority sync-over-Kafka jobs (overrides direct proxy)
+	InferenceURL  string              // full URL of the backend endpoint (direct proxy fallback)
+	Operations    map[string][]string // operation name → URL paths (all indexed; first used for async)
+	SyncTopic     string              // Kafka topic for priority sync-over-Kafka jobs (overrides direct proxy)
+	PriorityTopic string              // Kafka topic for high-priority async jobs (SA accounts)
 }
 
 // OperationPath returns the first path for the given operation name.
@@ -140,6 +141,7 @@ func NewRegistry(cfgs []config.ServiceConfig) *Registry {
 			InferenceURL:  cfg.InferenceURL,
 			Operations:    cfg.Operations,
 			SyncTopic:     cfg.SyncTopic,
+			PriorityTopic: cfg.PriorityTopic,
 		}
 
 		if r.byTypeModel[cfg.Type] == nil {
@@ -394,7 +396,7 @@ func (r *Registry) All() []*Def {
 func (r *Registry) HasKafkaServices() bool {
 	for _, models := range r.byTypeModel {
 		for _, d := range models {
-			if d.InputTopic != "" || d.ResultTopic != "" || d.SyncTopic != "" {
+			if d.InputTopic != "" || d.ResultTopic != "" || d.SyncTopic != "" || d.PriorityTopic != "" {
 				return true
 			}
 		}

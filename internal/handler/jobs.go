@@ -33,10 +33,11 @@ var reservedJobFields = map[string]bool{
 
 // JobHandler handles job submission and status queries.
 type JobHandler struct {
-	registry *service.Registry
-	store    s3Store        // reuses the interface defined in sync.go
-	redis    asyncJobStore
-	producer eventProducer // reuses the interface defined in sync.go
+	registry       *service.Registry
+	store          s3Store       // reuses the interface defined in sync.go
+	redis          asyncJobStore
+	producer       eventProducer // reuses the interface defined in sync.go
+	priorityHeader string        // HTTP header that triggers high-priority routing (e.g. "X-Priority")
 }
 
 func NewJobHandler(
@@ -44,8 +45,9 @@ func NewJobHandler(
 	store s3Store,
 	redis asyncJobStore,
 	producer eventProducer,
+	priorityHeader string,
 ) *JobHandler {
-	return &JobHandler{registry, store, redis, producer}
+	return &JobHandler{registry, store, redis, producer, priorityHeader}
 }
 
 // submitResponse is the 202 body returned after a successful job submission.
@@ -167,11 +169,21 @@ func (h *JobHandler) Submit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Step 3 — publish the input event to the model's Kafka topic.
+	// When the priority header is present and the service has a priority_topic,
+	// route to that topic so the relay processes it with elevated priority
+	// (defers normal async jobs via the syncPriority flag, same as sync-over-Kafka).
 	operation := r.FormValue("operation")
 	inferenceURL, err := def.OperationPath(operation)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+
+	topic := def.InputTopic
+	mode := "async"
+	if h.priorityHeader != "" && r.Header.Get(h.priorityHeader) != "" && def.PriorityTopic != "" {
+		topic = def.PriorityTopic
+		mode = "async-priority"
 	}
 
 	event := &model.InputEvent{
@@ -183,7 +195,7 @@ func (h *JobHandler) Submit(w http.ResponseWriter, r *http.Request) {
 		Params:       params,
 		CreatedAt:    now,
 	}
-	if err := h.producer.PublishInputEvent(r.Context(), def.InputTopic, event); err != nil {
+	if err := h.producer.PublishInputEvent(r.Context(), topic, event); err != nil {
 		slog.ErrorContext(r.Context(), "kafka publish failed", "job_id", jobID, "error", err)
 		// Mark the job as failed so the client can react instead of polling forever.
 		_ = h.redis.UpdateJobResult(r.Context(), jobID, model.JobStatusFailed, "", "failed to enqueue")
@@ -202,10 +214,12 @@ func (h *JobHandler) Submit(w http.ResponseWriter, r *http.Request) {
 		"service_type", serviceType,
 		"model", def.Model,
 		"file", header.Filename,
+		"mode", mode,
+		"topic", topic,
 	)
 
-	metrics.RequestsTotal.WithLabelValues("async", serviceType, def.Model, "202").Inc()
-	metrics.RequestDuration.WithLabelValues("async", serviceType, def.Model).Observe(time.Since(start).Seconds())
+	metrics.RequestsTotal.WithLabelValues(mode, serviceType, def.Model, "202").Inc()
+	metrics.RequestDuration.WithLabelValues(mode, serviceType, def.Model).Observe(time.Since(start).Seconds())
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
