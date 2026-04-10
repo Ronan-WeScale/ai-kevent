@@ -10,6 +10,15 @@ server:
   # to that topic and processed with elevated priority by the relay.
   # Leave empty to disable priority routing.
   priority_header: "${PRIORITY_HEADER:-}"
+  # consumer_header: HTTP header injected by APISIX after authentication to
+  # identify the API consumer (e.g. "X-Consumer-Username").
+  # When set:
+  #   - consumer name is stored in the job record and indexed in Redis
+  #   - GET /jobs returns the consumer's job list
+  #   - GET /jobs/{type}/{id} enforces ownership (404 on mismatch)
+  #   - kevent_jobs_by_consumer_total metric is emitted per consumer
+  # Leave empty in deployments without upstream authentication.
+  consumer_header: "${CONSUMER_HEADER:-}"
 
 kafka:
   brokers:

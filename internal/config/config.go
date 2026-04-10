@@ -35,6 +35,16 @@ type ServerConfig struct {
 	// priority-topic jobs via POST /sync, which defers normal async jobs
 	// (identical mechanism to sync-over-Kafka priority).
 	PriorityHeader string `yaml:"priority_header"`
+	// ConsumerHeader is the HTTP header used to identify the API consumer.
+	// Typically set by APISIX after authentication (e.g. "X-Consumer-Username").
+	// When configured:
+	//   - the consumer name is stored in the job record and tracked in a Redis
+	//     sorted set for listing via GET /jobs
+	//   - kevent_jobs_by_consumer_total metric is incremented per consumer
+	//   - GET /jobs/{service_type}/{id} enforces ownership: if the header is
+	//     present, the job's consumer_name must match or 404 is returned
+	// Leave empty in deployments without upstream authentication.
+	ConsumerHeader string `yaml:"consumer_header"`
 }
 
 type KafkaConfig struct {

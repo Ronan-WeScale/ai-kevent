@@ -23,6 +23,7 @@ import (
 	"kevent/gateway/internal/storage"
 )
 
+
 // s3Store is the subset of storage.S3Client used by SyncHandler.
 type s3Store interface {
 	Upload(ctx context.Context, key string, body io.Reader, size int64, contentType string) error
@@ -58,11 +59,12 @@ var reservedSyncFields = map[string]bool{
 //   - application/json or no sync_topic configured → direct proxy to the inference
 //     backend (original behaviour).
 type SyncHandler struct {
-	registry   *service.Registry
-	s3         s3Store
-	redis      jobStore
-	producer   eventProducer
-	httpClient *http.Client
+	registry       *service.Registry
+	s3             s3Store
+	redis          jobStore
+	producer       eventProducer
+	httpClient     *http.Client
+	consumerHeader string // HTTP header identifying the API consumer (e.g. "X-Consumer-Username")
 }
 
 func NewSyncHandler(
@@ -70,12 +72,14 @@ func NewSyncHandler(
 	s3 s3Store,
 	redis jobStore,
 	producer eventProducer,
+	consumerHeader string,
 ) *SyncHandler {
 	return &SyncHandler{
-		registry: registry,
-		s3:       s3,
-		redis:    redis,
-		producer: producer,
+		registry:       registry,
+		s3:             s3,
+		redis:          redis,
+		producer:       producer,
+		consumerHeader: consumerHeader,
 		// Generous timeout for direct-proxy path; Knative timeoutSeconds is the
 		// real ceiling for the sync-over-Kafka path (controlled by context).
 		httpClient: &http.Client{Timeout: 15 * time.Minute},
@@ -197,6 +201,11 @@ func (h *SyncHandler) handleMultipartViaKafka(w http.ResponseWriter, r *http.Req
 		params[k] = values[0]
 	}
 
+	consumerName := ""
+	if h.consumerHeader != "" {
+		consumerName = r.Header.Get(h.consumerHeader)
+	}
+
 	jobID := uuid.New().String()
 	ext := filepath.Ext(header.Filename)
 	inputRef := fmt.Sprintf("%s/input%s", jobID, ext)
@@ -209,13 +218,14 @@ func (h *SyncHandler) handleMultipartViaKafka(w http.ResponseWriter, r *http.Req
 
 	now := time.Now().UTC()
 	if err := h.redis.SaveJob(r.Context(), &model.Job{
-		ID:          jobID,
-		ServiceType: def.Type,
-		Model:       def.Model,
-		Status:      model.JobStatusPending,
-		InputRef:    inputRef,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:           jobID,
+		ServiceType:  def.Type,
+		Model:        def.Model,
+		Status:       model.JobStatusPending,
+		InputRef:     inputRef,
+		ConsumerName: consumerName,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}); err != nil {
 		slog.ErrorContext(r.Context(), "redis save failed", "job_id", jobID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to save job")
@@ -254,6 +264,9 @@ func (h *SyncHandler) handleMultipartViaKafka(w http.ResponseWriter, r *http.Req
 
 	slog.InfoContext(r.Context(), "sync job enqueued",
 		"job_id", jobID, "model", def.Model, "topic", def.SyncTopic)
+	if consumerName != "" {
+		metrics.JobsByConsumerTotal.WithLabelValues("sync", def.Type, def.Model, consumerName).Inc()
+	}
 
 	// committed tracks whether we have already sent the 200 + headers to the
 	// client. Once committed, WriteHeader calls are no-ops in HTTP/1.1, so errors

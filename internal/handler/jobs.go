@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -23,6 +24,7 @@ type asyncJobStore interface {
 	GetJob(ctx context.Context, id string) (*model.Job, error)
 	DeleteJob(ctx context.Context, id string) error
 	UpdateJobResult(ctx context.Context, jobID string, status model.JobStatus, resultRef, errMsg string) error
+	ListJobsByConsumer(ctx context.Context, consumer string, limit, offset int64) ([]*model.Job, int64, error)
 }
 
 // reservedJobFields are multipart form fields consumed by the gateway
@@ -38,6 +40,7 @@ type JobHandler struct {
 	redis          asyncJobStore
 	producer       eventProducer // reuses the interface defined in sync.go
 	priorityHeader string        // HTTP header that triggers high-priority routing (e.g. "X-Priority")
+	consumerHeader string        // HTTP header identifying the API consumer (e.g. "X-Consumer-Username")
 }
 
 func NewJobHandler(
@@ -46,8 +49,9 @@ func NewJobHandler(
 	redis asyncJobStore,
 	producer eventProducer,
 	priorityHeader string,
+	consumerHeader string,
 ) *JobHandler {
-	return &JobHandler{registry, store, redis, producer, priorityHeader}
+	return &JobHandler{registry, store, redis, producer, priorityHeader, consumerHeader}
 }
 
 // submitResponse is the 202 body returned after a successful job submission.
@@ -59,13 +63,32 @@ type submitResponse struct {
 }
 
 // statusResponse is the body returned on GET /jobs/{service_type}/{id}.
-// CallbackURL is intentionally excluded from the response.
+// CallbackURL and ConsumerName are intentionally excluded from the response.
 type statusResponse struct {
 	JobID       string          `json:"job_id"`
 	ServiceType string          `json:"service_type"`
 	Model       string          `json:"model"`
 	Status      model.JobStatus `json:"status"`
 	Result      json.RawMessage `json:"result,omitempty"` // inline result payload when completed
+	Error       string          `json:"error,omitempty"`
+	CreatedAt   time.Time       `json:"created_at"`
+	UpdatedAt   time.Time       `json:"updated_at"`
+}
+
+// listJobsResponse is the body returned on GET /jobs.
+type listJobsResponse struct {
+	Consumer string           `json:"consumer"`
+	Total    int64            `json:"total"`
+	Limit    int64            `json:"limit"`
+	Offset   int64            `json:"offset"`
+	Jobs     []*jobSummary    `json:"jobs"`
+}
+
+type jobSummary struct {
+	JobID       string          `json:"job_id"`
+	ServiceType string          `json:"service_type"`
+	Model       string          `json:"model"`
+	Status      model.JobStatus `json:"status"`
 	Error       string          `json:"error,omitempty"`
 	CreatedAt   time.Time       `json:"created_at"`
 	UpdatedAt   time.Time       `json:"updated_at"`
@@ -124,6 +147,10 @@ func (h *JobHandler) Submit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	callbackURL := r.FormValue("callback_url")
+	consumerName := ""
+	if h.consumerHeader != "" {
+		consumerName = r.Header.Get(h.consumerHeader)
+	}
 
 	// Collect extra form fields to forward to the inference API.
 	// Reserved gateway fields are excluded.
@@ -151,14 +178,15 @@ func (h *JobHandler) Submit(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now().UTC()
 	job := &model.Job{
-		ID:          jobID,
-		ServiceType: serviceType,
-		Model:       def.Model,
-		Status:      model.JobStatusPending,
-		InputRef:    inputRef,
-		CallbackURL: callbackURL,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:           jobID,
+		ServiceType:  serviceType,
+		Model:        def.Model,
+		Status:       model.JobStatusPending,
+		InputRef:     inputRef,
+		CallbackURL:  callbackURL,
+		ConsumerName: consumerName,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
 
 	// Step 2 — persist the job record in Redis.
@@ -220,6 +248,9 @@ func (h *JobHandler) Submit(w http.ResponseWriter, r *http.Request) {
 
 	metrics.RequestsTotal.WithLabelValues(mode, serviceType, def.Model, "202").Inc()
 	metrics.RequestDuration.WithLabelValues(mode, serviceType, def.Model).Observe(time.Since(start).Seconds())
+	if consumerName != "" {
+		metrics.JobsByConsumerTotal.WithLabelValues(mode, serviceType, def.Model, consumerName).Inc()
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
@@ -235,6 +266,11 @@ func (h *JobHandler) Submit(w http.ResponseWriter, r *http.Request) {
 
 // GetStatus handles GET /jobs/{service_type}/{id}.
 // When the job is complete the result is inlined in the response body.
+//
+// Consumer isolation: if consumer_header is configured and the request carries
+// that header, the job's consumer_name must match — otherwise 404 is returned.
+// This prevents a consumer from fetching another consumer's job even if they
+// somehow obtained its UUID. Deployments without consumer_header skip this check.
 func (h *JobHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	serviceType := chi.URLParam(r, "service_type")
 	id := chi.URLParam(r, "id")
@@ -249,6 +285,19 @@ func (h *JobHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	if job.ServiceType != serviceType {
 		writeError(w, http.StatusNotFound, fmt.Sprintf("job %q not found", id))
 		return
+	}
+
+	// Consumer ownership check (opt-in): only enforced when consumer_header is
+	// configured AND the header is present in this request.
+	// - Header absent → skip check (admin/internal calls, auth-less deployments).
+	// - Header present + mismatch → 404 (don't reveal the job exists for another consumer).
+	if h.consumerHeader != "" {
+		if requester := r.Header.Get(h.consumerHeader); requester != "" {
+			if job.ConsumerName != requester {
+				writeError(w, http.StatusNotFound, fmt.Sprintf("job %q not found", id))
+				return
+			}
+		}
 	}
 
 	resp := statusResponse{
@@ -290,6 +339,74 @@ func (h *JobHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 			}
 		}(job.ResultRef, job.ID)
 	}
+}
+
+// ListJobs handles GET /jobs.
+// Requires consumer_header to be configured. Returns the list of jobs for
+// the consumer identified by that header, ordered most-recent-first.
+//
+// Query params:
+//
+//	limit  (default 20, max 100)
+//	offset (default 0)
+func (h *JobHandler) ListJobs(w http.ResponseWriter, r *http.Request) {
+	if h.consumerHeader == "" {
+		writeError(w, http.StatusNotImplemented, "GET /jobs requires consumer_header to be configured")
+		return
+	}
+
+	consumer := r.Header.Get(h.consumerHeader)
+	if consumer == "" {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("header %q is required", h.consumerHeader))
+		return
+	}
+
+	limit := int64(20)
+	offset := int64(0)
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			if n > 100 {
+				n = 100
+			}
+			limit = n
+		}
+	}
+	if v := r.URL.Query().Get("offset"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {
+			offset = n
+		}
+	}
+
+	jobs, total, err := h.redis.ListJobsByConsumer(r.Context(), consumer, limit, offset)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "list jobs failed", "consumer", consumer, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to list jobs")
+		return
+	}
+
+	summaries := make([]*jobSummary, len(jobs))
+	for i, j := range jobs {
+		summaries[i] = &jobSummary{
+			JobID:       j.ID,
+			ServiceType: j.ServiceType,
+			Model:       j.Model,
+			Status:      j.Status,
+			Error:       j.Error,
+			CreatedAt:   j.CreatedAt,
+			UpdatedAt:   j.UpdatedAt,
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(listJobsResponse{
+		Consumer: consumer,
+		Total:    total,
+		Limit:    limit,
+		Offset:   offset,
+		Jobs:     summaries,
+	})
 }
 
 func writeError(w http.ResponseWriter, code int, msg string) {

@@ -16,17 +16,32 @@ Versioning: each component is versioned independently — see tag conventions be
 
 ## Gateway
 
+### [v0.6.1] — 2026-04-10
+
+#### Added
+- Consumer tracking via configurable `server.consumer_header` (e.g. `X-Consumer-Username` set by APISIX):
+  - Consumer name stored in job record (`consumer_name` field)
+  - Redis sorted set `consumer:{name}:jobs` indexed at submit time (score = creation timestamp)
+  - `GET /jobs` endpoint: paginated job list for the authenticated consumer (`?limit=20&offset=0`)
+  - `kevent_jobs_by_consumer_total{mode, service_type, model, consumer}` Prometheus counter
+- Consumer ownership check on `GET /jobs/{service_type}/{id}`: if `consumer_header` is configured and the header is present, the job's `consumer_name` must match — returns 404 on mismatch (no information leak). Auth-less deployments (no header) are unaffected.
+- `DeleteJob` now atomically cleans the consumer index via a Lua script (ZREM + DEL in a single round-trip)
+
+#### Changed
+- `NewJobHandler` accepts a new `consumerHeader string` parameter
+- `NewSyncHandler` accepts a new `consumerHeader string` parameter
+- `asyncJobStore` interface gains `ListJobsByConsumer(ctx, consumer, limit, offset)`
+
+---
+
 ### [v0.6.0] — 2026-04-10
 
 #### Added
 - Redis operation metrics: `kevent_redis_operation_duration_seconds` histogram and `kevent_redis_errors_total` counter, both labelled by operation (`save_job`, `get_job`, `delete_job`, `update_job_result`)
 - Priority routing: requests carrying the configurable `server.priority_header` are published to `services[].priority_topic` (Kafka), routed to `POST /sync` on the relay (sets `syncPriority++`, deferring async jobs)
-- Consumer tracking: gateway reads `server.consumer_header`, attaches consumer name to job records (Redis), exposes `kevent_jobs_by_consumer_total{service_type, model, consumer}` metric
-- `GET /jobs` endpoint: list jobs by consumer (reads `consumer_header`, returns paginated job list from Redis sorted set)
 - MkDocs Material documentation site: architecture, deployment, configuration reference, Kafka/SASL guide, gitflow, releasing guide — deployed automatically to GitHub Pages
 
 #### Changed
-- `NewJobHandler` and `NewSyncHandler` accept `consumerHeader` and `priorityHeader` parameters
 - `helm-release.yml`: docs publishing step removed (dedicated `docs.yml` workflow handles it)
 - `.github/workflows/docs.yml`: new workflow — builds MkDocs and deploys to `gh-pages` while preserving Helm `index.yaml` and `.tgz` packages
 
