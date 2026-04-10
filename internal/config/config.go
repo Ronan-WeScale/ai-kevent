@@ -28,6 +28,13 @@ type ServerConfig struct {
 	ReadTimeout  time.Duration `yaml:"read_timeout"`
 	WriteTimeout time.Duration `yaml:"write_timeout"`
 	IdleTimeout  time.Duration `yaml:"idle_timeout"`
+	// PriorityHeader is the HTTP header injected by APISIX on SA consumer
+	// requests to signal high-priority processing. When a request carries this
+	// header and the service has a priority_topic configured, the job is
+	// published to that topic instead of input_topic. The relay processes
+	// priority-topic jobs via POST /sync, which defers normal async jobs
+	// (identical mechanism to sync-over-Kafka priority).
+	PriorityHeader string `yaml:"priority_header"`
 }
 
 type KafkaConfig struct {
@@ -87,7 +94,12 @@ type ServiceConfig struct {
 	// SyncTopic is the dedicated Kafka topic for priority (sync-over-Kafka) jobs.
 	// When set, POST /v1/* multipart requests are routed through Kafka instead of
 	// proxied directly, giving them priority over async jobs via a second KafkaSource.
-	SyncTopic     string   `yaml:"sync_topic"`
+	SyncTopic string `yaml:"sync_topic"`
+	// PriorityTopic is the Kafka topic for high-priority async jobs (e.g. SA accounts).
+	// When set and the server.priority_header is present on the request, the job is
+	// published here instead of input_topic. A dedicated KafkaSource routes this topic
+	// to POST /sync on the relay, which defers normal async jobs for its duration.
+	PriorityTopic string `yaml:"priority_topic"`
 	AcceptedExts  []string `yaml:"accepted_exts"`
 	MaxFileSizeMB int64    `yaml:"max_file_size_mb"`
 	// SwaggerURL is an optional URL to an OpenAPI JSON spec for this service.
@@ -191,7 +203,7 @@ func (c *Config) validate() error {
 		if (svc.InputTopic == "") != (svc.ResultTopic == "") {
 			return fmt.Errorf("service %q: input_topic and result_topic must both be set or both be empty", svc.Type)
 		}
-		if svc.InputTopic != "" || svc.ResultTopic != "" || svc.SyncTopic != "" {
+		if svc.InputTopic != "" || svc.ResultTopic != "" || svc.SyncTopic != "" || svc.PriorityTopic != "" {
 			needsKafka = true
 		}
 	}

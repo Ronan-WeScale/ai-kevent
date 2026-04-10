@@ -1,8 +1,3 @@
----
-layout: default
-title: KeventGatewaySyncJobsInFlightHigh
----
-
 # KeventGatewaySyncJobsInFlightHigh
 
 **Severity:** warning

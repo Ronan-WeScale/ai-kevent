@@ -1,8 +1,3 @@
----
-layout: default
-title: KeventGatewayS3Errors
----
-
 # KeventGatewayS3Errors
 
 **Severity:** warning
