@@ -1,8 +1,3 @@
----
-layout: default
-title: KeventGatewayHighErrorRate
----
-
 # KeventGatewayHighErrorRate
 
 **Severity:** warning / critical
