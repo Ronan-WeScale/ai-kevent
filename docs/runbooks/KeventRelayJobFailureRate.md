@@ -1,8 +1,3 @@
----
-layout: default
-title: KeventRelayJobFailureRate
----
-
 # KeventRelayJobFailureRate
 
 **Severity:** warning / critical

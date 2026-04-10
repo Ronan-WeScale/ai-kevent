@@ -1,8 +1,3 @@
----
-layout: default
-title: KeventGatewayKafkaPublishErrors
----
-
 # KeventGatewayKafkaPublishErrors
 
 **Severity:** critical
