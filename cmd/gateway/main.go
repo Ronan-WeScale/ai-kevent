@@ -44,7 +44,7 @@ func buildRouter(
 	logger *slog.Logger,
 	reloadFn func() error,
 ) *chi.Mux {
-	jobHandler := handler.NewJobHandler(reg, s3Client, redisClient, producer, cfg.Server.PriorityHeader)
+	jobHandler := handler.NewJobHandler(reg, s3Client, redisClient, producer, cfg.Server.PriorityHeader, cfg.Server.ConsumerHeader)
 
 	r := chi.NewRouter()
 	r.Use(chimw.RequestID)
@@ -60,12 +60,13 @@ func buildRouter(
 	r.Get("/docs", handler.DocsUI(swaggerSpecs))
 	r.Get("/openapi.yaml", handler.NewDocsSpec(spec))
 	r.Get("/docs/spec/{type}/{model}", handler.NewSwaggerHandler(swaggerSpecs))
+	r.Get("/jobs", jobHandler.ListJobs)
 	r.Post("/jobs/{service_type}", jobHandler.Submit)
 	r.Get("/jobs/{service_type}/{id}", jobHandler.GetStatus)
 	r.Post("/-/reload", handler.NewReloadHandler(reloadFn))
 
 	if reg.HasSyncServices() {
-		syncHandler := handler.NewSyncHandler(reg, s3Client, redisClient, producer)
+		syncHandler := handler.NewSyncHandler(reg, s3Client, redisClient, producer, cfg.Server.ConsumerHeader)
 		r.Get("/v1/models", handler.ListModels(reg))
 		for _, prefix := range reg.SyncPathPrefixes() {
 			r.Post(prefix+"/*", syncHandler.ServeHTTP)

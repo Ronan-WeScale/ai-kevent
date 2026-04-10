@@ -73,4 +73,12 @@ var (
 		Name: "kevent_redis_errors_total",
 		Help: "Total number of Redis operation errors.",
 	}, []string{"operation"})
+
+	// JobsByConsumerTotal counts submitted jobs per consumer, labelled by
+	// service_type, model, and consumer name (from the configurable consumer header).
+	// Only incremented when consumer_header is configured and the header is present.
+	JobsByConsumerTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "kevent_jobs_by_consumer_total",
+		Help: "Total number of jobs submitted per consumer.",
+	}, []string{"mode", "service_type", "model", "consumer"})
 )
