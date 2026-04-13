@@ -44,20 +44,38 @@ func (r *RedisClient) Close() error {
 	return r.client.Close()
 }
 
-func jobKey(id string) string { return "job:" + id }
+func jobKey(id string) string        { return "job:" + id }
+func consumerKey(name string) string { return "consumer:" + name + ":jobs" }
 
 // SaveJob persists the full job struct as a JSON blob with the configured TTL.
+// If the job has a ConsumerName, the job ID is also added to the consumer's
+// sorted set (score = Unix timestamp) so it can be listed via ListJobsByConsumer.
 func (r *RedisClient) SaveJob(ctx context.Context, job *model.Job) error {
 	start := time.Now()
 	data, err := json.Marshal(job)
 	if err != nil {
 		return fmt.Errorf("marshaling job %q: %w", job.ID, err)
 	}
-	err = r.client.Set(ctx, jobKey(job.ID), data, r.jobTTL).Err()
+
+	var pipeErr error
+	if job.ConsumerName != "" {
+		_, pipeErr = r.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+			pipe.Set(ctx, jobKey(job.ID), data, r.jobTTL)
+			pipe.ZAdd(ctx, consumerKey(job.ConsumerName), redis.Z{
+				Score:  float64(job.CreatedAt.Unix()),
+				Member: job.ID,
+			})
+			pipe.Expire(ctx, consumerKey(job.ConsumerName), r.jobTTL)
+			return nil
+		})
+	} else {
+		pipeErr = r.client.Set(ctx, jobKey(job.ID), data, r.jobTTL).Err()
+	}
+
 	metrics.RedisOperationDuration.WithLabelValues("save_job").Observe(time.Since(start).Seconds())
-	if err != nil {
+	if pipeErr != nil {
 		metrics.RedisErrorsTotal.WithLabelValues("save_job").Inc()
-		return fmt.Errorf("saving job %q: %w", job.ID, err)
+		return fmt.Errorf("saving job %q: %w", job.ID, pipeErr)
 	}
 	return nil
 }
@@ -82,16 +100,89 @@ func (r *RedisClient) GetJob(ctx context.Context, id string) (*model.Job, error)
 	return &job, nil
 }
 
-// DeleteJob removes a job record from Redis.
+// deleteJobScript atomically removes a job and cleans up the consumer index.
+// It reads the job JSON, extracts consumer_name (if any), removes the job ID
+// from the consumer sorted set, then deletes the job key — all in one step.
+var deleteJobScript = redis.NewScript(`
+local data = redis.call('GET', KEYS[1])
+if data then
+    local ok, job = pcall(cjson.decode, data)
+    if ok and job['consumer_name'] and job['consumer_name'] ~= '' then
+        redis.call('ZREM', 'consumer:' .. job['consumer_name'] .. ':jobs', ARGV[1])
+    end
+end
+return redis.call('DEL', KEYS[1])
+`)
+
+// DeleteJob removes a job record from Redis and cleans up the consumer index.
 func (r *RedisClient) DeleteJob(ctx context.Context, id string) error {
 	start := time.Now()
-	err := r.client.Del(ctx, jobKey(id)).Err()
+	err := deleteJobScript.Run(ctx, r.client, []string{jobKey(id)}, id).Err()
 	metrics.RedisOperationDuration.WithLabelValues("delete_job").Observe(time.Since(start).Seconds())
 	if err != nil {
 		metrics.RedisErrorsTotal.WithLabelValues("delete_job").Inc()
 		return fmt.Errorf("deleting job %q: %w", id, err)
 	}
 	return nil
+}
+
+// ListJobsByConsumer returns up to limit jobs for the given consumer, ordered
+// by most-recent-first (ZREVRANGE on the score = creation Unix timestamp).
+// total is the full count before pagination.
+func (r *RedisClient) ListJobsByConsumer(ctx context.Context, consumer string, limit, offset int64) ([]*model.Job, int64, error) {
+	key := consumerKey(consumer)
+
+	// Pipeline: ZCARD + ZREVRANGE in one round-trip.
+	var total int64
+	var ids []string
+	_, err := r.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		cardCmd := pipe.ZCard(ctx, key)
+		rangeCmd := pipe.ZRevRange(ctx, key, offset, offset+limit-1)
+		_ = cardCmd
+		_ = rangeCmd
+		return nil
+	})
+	if err != nil && err != redis.Nil {
+		return nil, 0, fmt.Errorf("listing jobs for consumer %q: %w", consumer, err)
+	}
+	// Re-run individually to get typed results (TxPipelined results are in cmds).
+	pipe := r.client.Pipeline()
+	cardCmd := pipe.ZCard(ctx, key)
+	rangeCmd := pipe.ZRevRange(ctx, key, offset, offset+limit-1)
+	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+		return nil, 0, fmt.Errorf("listing jobs for consumer %q: %w", consumer, err)
+	}
+	total = cardCmd.Val()
+	ids = rangeCmd.Val()
+
+	if len(ids) == 0 {
+		return nil, total, nil
+	}
+
+	// Batch-fetch all job records.
+	keys := make([]string, len(ids))
+	for i, id := range ids {
+		keys[i] = jobKey(id)
+	}
+	vals, err := r.client.MGet(ctx, keys...).Result()
+	if err != nil {
+		return nil, 0, fmt.Errorf("fetching jobs for consumer %q: %w", consumer, err)
+	}
+
+	jobs := make([]*model.Job, 0, len(vals))
+	for i, v := range vals {
+		if v == nil {
+			// Job TTL expired but consumer index not yet cleaned — skip stale entry.
+			continue
+		}
+		var job model.Job
+		if err := json.Unmarshal([]byte(v.(string)), &job); err != nil {
+			slog.Warn("skipping malformed job record", "id", ids[i], "error", err)
+			continue
+		}
+		jobs = append(jobs, &job)
+	}
+	return jobs, total, nil
 }
 
 // updateJobScript atomically reads a job JSON, patches status/result_ref/error/updated_at,
