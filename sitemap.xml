@@ -2,74 +2,74 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://ia-generative.github.io/kevent-ai/</loc>
-         <lastmod>2026-04-10</lastmod>
+         <lastmod>2026-04-13</lastmod>
     </url>
     <url>
          <loc>https://ia-generative.github.io/kevent-ai/changelog/</loc>
-         <lastmod>2026-04-10</lastmod>
+         <lastmod>2026-04-13</lastmod>
     </url>
     <url>
          <loc>https://ia-generative.github.io/kevent-ai/architecture/overview/</loc>
-         <lastmod>2026-04-10</lastmod>
+         <lastmod>2026-04-13</lastmod>
     </url>
     <url>
          <loc>https://ia-generative.github.io/kevent-ai/architecture/priority/</loc>
-         <lastmod>2026-04-10</lastmod>
+         <lastmod>2026-04-13</lastmod>
     </url>
     <url>
          <loc>https://ia-generative.github.io/kevent-ai/architecture/request-flows/</loc>
-         <lastmod>2026-04-10</lastmod>
+         <lastmod>2026-04-13</lastmod>
     </url>
     <url>
          <loc>https://ia-generative.github.io/kevent-ai/architecture/service-registry/</loc>
-         <lastmod>2026-04-10</lastmod>
+         <lastmod>2026-04-13</lastmod>
     </url>
     <url>
          <loc>https://ia-generative.github.io/kevent-ai/contributing/gitflow/</loc>
-         <lastmod>2026-04-10</lastmod>
+         <lastmod>2026-04-13</lastmod>
     </url>
     <url>
          <loc>https://ia-generative.github.io/kevent-ai/contributing/releasing/</loc>
-         <lastmod>2026-04-10</lastmod>
+         <lastmod>2026-04-13</lastmod>
     </url>
     <url>
          <loc>https://ia-generative.github.io/kevent-ai/deployment/configuration/</loc>
-         <lastmod>2026-04-10</lastmod>
+         <lastmod>2026-04-13</lastmod>
     </url>
     <url>
          <loc>https://ia-generative.github.io/kevent-ai/deployment/helm/</loc>
-         <lastmod>2026-04-10</lastmod>
+         <lastmod>2026-04-13</lastmod>
     </url>
     <url>
          <loc>https://ia-generative.github.io/kevent-ai/deployment/kafka/</loc>
-         <lastmod>2026-04-10</lastmod>
+         <lastmod>2026-04-13</lastmod>
     </url>
     <url>
          <loc>https://ia-generative.github.io/kevent-ai/runbooks/KeventGatewayHighErrorRate/</loc>
-         <lastmod>2026-04-10</lastmod>
+         <lastmod>2026-04-13</lastmod>
     </url>
     <url>
          <loc>https://ia-generative.github.io/kevent-ai/runbooks/KeventGatewayKafkaPublishErrors/</loc>
-         <lastmod>2026-04-10</lastmod>
+         <lastmod>2026-04-13</lastmod>
     </url>
     <url>
          <loc>https://ia-generative.github.io/kevent-ai/runbooks/KeventGatewayS3Errors/</loc>
-         <lastmod>2026-04-10</lastmod>
+         <lastmod>2026-04-13</lastmod>
     </url>
     <url>
          <loc>https://ia-generative.github.io/kevent-ai/runbooks/KeventGatewaySyncJobsInFlightHigh/</loc>
-         <lastmod>2026-04-10</lastmod>
+         <lastmod>2026-04-13</lastmod>
     </url>
     <url>
          <loc>https://ia-generative.github.io/kevent-ai/runbooks/KeventRelayInferenceSlow/</loc>
-         <lastmod>2026-04-10</lastmod>
+         <lastmod>2026-04-13</lastmod>
     </url>
     <url>
          <loc>https://ia-generative.github.io/kevent-ai/runbooks/KeventRelayJobFailureRate/</loc>
-         <lastmod>2026-04-10</lastmod>
+         <lastmod>2026-04-13</lastmod>
     </url>
     <url>
          <loc>https://ia-generative.github.io/kevent-ai/runbooks/KeventRelayS3Errors/</loc>
-         <lastmod>2026-04-10</lastmod>
+         <lastmod>2026-04-13</lastmod>
     </url>
 </urlset>

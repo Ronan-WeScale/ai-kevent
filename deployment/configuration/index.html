@@ -684,6 +684,30 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Server">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#consumer_header" class="md-nav__link">
+    <span class="md-ellipsis">
+      consumer_header
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#priority_header" class="md-nav__link">
+    <span class="md-ellipsis">
+      priority_header
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1160,6 +1184,30 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Server">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#consumer_header" class="md-nav__link">
+    <span class="md-ellipsis">
+      consumer_header
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#priority_header" class="md-nav__link">
+    <span class="md-ellipsis">
+      priority_header
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1261,6 +1309,18 @@
 </span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">  </span><span class="nt">consumer_header</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;&quot;</span><span class="w">      </span><span class="c1"># header name for consumer identification (e.g. X-Consumer-Username)</span>
 </span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">  </span><span class="nt">priority_header</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;&quot;</span><span class="w">      </span><span class="c1"># header name for priority routing (e.g. X-Priority)</span>
 </span></code></pre></div>
+<h3 id="consumer_header"><code>consumer_header</code><a class="headerlink" href="#consumer_header" title="Permanent link">&para;</a></h3>
+<p>When set to a non-empty header name (e.g. <code>X-Consumer-Username</code>, typically injected by APISIX after authentication):</p>
+<ul>
+<li>The consumer name is stored in the job record (<code>consumer_name</code> field in Redis).</li>
+<li>A Redis sorted set <code>consumer:{name}:jobs</code> is maintained per consumer (score = creation timestamp, same TTL as the job). Used by <code>GET /jobs</code>.</li>
+<li><code>GET /jobs/{service_type}/{id}</code> enforces <strong>ownership</strong>: if the header is present in the request, <code>job.consumer_name</code> must match — returns <code>404</code> on mismatch (no information leak about other consumers' jobs).</li>
+<li><code>kevent_jobs_by_consumer_total{mode, service_type, model, consumer}</code> is incremented per submission.</li>
+</ul>
+<p>Leave empty in deployments without upstream authentication — no behaviour change, zero overhead.</p>
+<h3 id="priority_header"><code>priority_header</code><a class="headerlink" href="#priority_header" title="Permanent link">&para;</a></h3>
+<p>When set and a request carries this header, the job is published to <code>services[].priority_topic</code> instead of <code>input_topic</code>. The relay processes priority-topic jobs via <code>POST /sync</code>, which sets <code>syncPriority++</code> and defers normal async jobs for its duration.</p>
+<p>Leave empty to disable priority routing.</p>
 <h2 id="kafka">Kafka<a class="headerlink" href="#kafka" title="Permanent link">&para;</a></h2>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">kafka</span><span class="p">:</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">brokers</span><span class="p">:</span>

@@ -637,11 +637,35 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#consumer-identification" class="md-nav__link">
+  <a href="#consumer-identification-and-isolation" class="md-nav__link">
     <span class="md-ellipsis">
-      Consumer identification
+      Consumer identification and isolation
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Consumer identification and isolation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#ownership-check-behaviour" class="md-nav__link">
+    <span class="md-ellipsis">
+      Ownership check behaviour
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#security-note" class="md-nav__link">
+    <span class="md-ellipsis">
+      Security note
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1199,11 +1223,35 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#consumer-identification" class="md-nav__link">
+  <a href="#consumer-identification-and-isolation" class="md-nav__link">
     <span class="md-ellipsis">
-      Consumer identification
+      Consumer identification and isolation
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Consumer identification and isolation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#ownership-check-behaviour" class="md-nav__link">
+    <span class="md-ellipsis">
+      Ownership check behaviour
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#security-note" class="md-nav__link">
+    <span class="md-ellipsis">
+      Security note
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1273,16 +1321,52 @@
 </span><span id="__span-2-17"><a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a><span class="w">  </span><span class="nt">extensions</span><span class="p">:</span>
 </span><span id="__span-2-18"><a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a><span class="w">    </span><span class="nt">path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/sync</span>
 </span></code></pre></div>
-<h2 id="consumer-identification">Consumer identification<a class="headerlink" href="#consumer-identification" title="Permanent link">&para;</a></h2>
-<p>Requests can carry a consumer name via a configurable header (<code>server.consumer_header</code>). The gateway:</p>
+<h2 id="consumer-identification-and-isolation">Consumer identification and isolation<a class="headerlink" href="#consumer-identification-and-isolation" title="Permanent link">&para;</a></h2>
+<p>When <code>server.consumer_header</code> is set (e.g. <code>X-Consumer-Username</code>, injected by APISIX after auth), the gateway:</p>
 <ol>
-<li>Attaches the consumer name to the job record in Redis</li>
-<li>Maintains a sorted set <code>consumer:{name}:jobs</code> for <code>GET /jobs</code> listing</li>
-<li>Increments <code>kevent_jobs_by_consumer_total{service_type, model, consumer}</code></li>
+<li>Stores <code>consumer_name</code> in the job record (Redis JSON)</li>
+<li>Maintains <code>consumer:{name}:jobs</code> sorted set (score = Unix timestamp, same TTL as job)</li>
+<li>Exposes <code>GET /jobs</code> to list a consumer's jobs (paginated, most-recent-first)</li>
+<li>Enforces ownership on <code>GET /jobs/{service_type}/{id}</code>: if the header is present, the job's <code>consumer_name</code> must match — returns <code>404</code> on mismatch</li>
+<li>Increments <code>kevent_jobs_by_consumer_total{mode, service_type, model, consumer}</code></li>
 </ol>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">server</span><span class="p">:</span>
 </span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">consumer_header</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;X-Consumer-Username&quot;</span><span class="w">   </span><span class="c1"># set by APISIX after authentication</span>
 </span></code></pre></div>
+<h3 id="ownership-check-behaviour">Ownership check behaviour<a class="headerlink" href="#ownership-check-behaviour" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th><code>consumer_header</code> configured</th>
+<th>Header in request</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>no</td>
+<td>—</td>
+<td>No check — auth-less deployments, all callers trusted</td>
+</tr>
+<tr>
+<td>yes</td>
+<td>absent</td>
+<td>No check — admin/internal calls bypass isolation</td>
+</tr>
+<tr>
+<td>yes</td>
+<td>present + matches job</td>
+<td><code>200 OK</code></td>
+</tr>
+<tr>
+<td>yes</td>
+<td>present + mismatch</td>
+<td><code>404</code> — no information leak about other consumers' jobs</td>
+</tr>
+</tbody>
+</table>
+<h3 id="security-note">Security note<a class="headerlink" href="#security-note" title="Permanent link">&para;</a></h3>
+<p>Brute-force by job ID is not feasible — IDs are UUID v4 (2¹²² combinations). The ownership check adds defence-in-depth for authenticated deployments: even if a consumer somehow obtained another consumer's UUID, the gateway returns <code>404</code>.</p>
 
 
 
