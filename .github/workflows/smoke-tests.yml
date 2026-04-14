@@ -1,29 +1,35 @@
 name: Smoke tests — dev
 
-# Triggered automatically after "Deploy — dev" succeeds (image pushed to :dev or :rc-<sha>).
-# Also triggerable manually via workflow_dispatch for ad-hoc runs.
+# Three ways to trigger:
+#
+#  1. Automatic — after "Deploy — dev" succeeds (every push to develop / release/*).
+#  2. PR comment — write `/smoke-test` in any PR comment (members / collaborators only).
+#  3. Manual     — workflow_dispatch from the Actions tab.
 #
 # Requires the following to be configured on the repository / environment:
 #
 #   Variables  (Settings → Environments → dev → Variables)
-#     GATEWAY_URL        https://api.kevent-dev.example.com
-#     AUDIO_URL          URL of a short speech audio file (.mp3 / .wav / .m4a)
-#     GATEWAY_READY_TIMEOUT  seconds to wait for the gateway to be ready after deploy (default: 120)
-#     WHISPER_MODEL      whisper-large-v3          (optional, this is the default)
-#     RERANK_MODEL       bge-reranker-v2-m3        (optional, this is the default)
-#     RERANK_ENDPOINT    /v1/rerank                (optional, this is the default)
+#     GATEWAY_URL            https://api.kevent-dev.example.com
+#     AUDIO_URL              URL of a short speech audio file (.mp3 / .wav / .m4a)
+#     GATEWAY_READY_TIMEOUT  seconds to wait for the gateway after a deploy (default: 120)
+#     WHISPER_MODEL          whisper-large-v3     (optional, this is the default)
+#     RERANK_MODEL           bge-reranker-v2-m3   (optional, this is the default)
+#     RERANK_ENDPOINT        /v1/rerank           (optional, this is the default)
 #
 #   Secrets    (Settings → Environments → dev → Secrets)
-#     GATEWAY_API_KEY    API key forwarded as the 'apikey' header (leave empty if no auth)
+#     GATEWAY_API_KEY        API key sent as the 'apikey' header (leave empty if no auth)
 
 on:
-  # Primary trigger: runs as soon as the dev deploy finishes successfully.
+  # ── 1. Auto: fires when the dev deploy finishes ─────────────────────────────
   workflow_run:
     workflows: ["Deploy — dev (hors-prod)"]
     types: [completed]
 
-  # Manual trigger: useful to re-run tests without a new deploy, or to test
-  # a specific gateway URL / audio file.
+  # ── 2. PR comment: `/smoke-test` written on any pull request ─────────────────
+  issue_comment:
+    types: [created]
+
+  # ── 3. Manual: Actions tab → Run workflow ────────────────────────────────────
   workflow_dispatch:
     inputs:
       gateway_url:
@@ -50,24 +56,51 @@ jobs:
     name: Smoke tests
     runs-on: ubuntu-latest
     environment: dev
-    # Skip when triggered via workflow_run if the upstream deploy failed.
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+
+    # ── Guard: skip if the upstream conditions are not met ────────────────────
+    #
+    # workflow_run  → only run when the deploy succeeded
+    # issue_comment → only run when:
+    #                   - the comment is on a pull request (not a plain issue)
+    #                   - the comment body contains /smoke-test
+    #                   - the author is a repo member or collaborator (not a random contributor)
+    # workflow_dispatch → always run
+    if: |
+      (github.event_name == 'workflow_run'   && github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'issue_comment'  &&
+       github.event.issue.pull_request       &&
+       contains(github.event.comment.body, '/smoke-test') &&
+       contains(fromJson('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+      (github.event_name == 'workflow_dispatch')
 
     steps:
       - uses: actions/checkout@v4
-        # workflow_run provides the SHA of the triggering commit — check out
-        # the same ref so smoke.sh matches the deployed code.
         with:
+          # workflow_run: check out the commit that triggered the deploy
+          # issue_comment / workflow_dispatch: use the default branch (develop)
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      # Acknowledge the /smoke-test comment with a 🚀 reaction so the author
+      # knows the workflow was picked up (only meaningful for the comment trigger).
+      - name: React to PR comment
+        if: github.event_name == 'issue_comment'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api \
+            repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions \
+            -X POST -f content=rocket
 
       - name: Install jq
         run: sudo apt-get install -y --no-install-recommends jq
 
-      # The deploy workflow pushes a new image and the cluster rolls out the pod.
-      # Wait until GET /health returns 200 before running the functional tests.
+      # The deploy workflow pushes a new image; the cluster rolls out the pod.
+      # Poll /health until 200 so the tests don't start on a stale or restarting pod.
+      # Skipped for comment and manual triggers (gateway is already stable).
       - name: Wait for gateway to be ready
+        if: github.event_name == 'workflow_run'
         env:
-          GATEWAY_URL:     ${{ inputs.gateway_url || vars.GATEWAY_URL }}
+          GATEWAY_URL:     ${{ vars.GATEWAY_URL }}
           GATEWAY_API_KEY: ${{ secrets.GATEWAY_API_KEY }}
           READY_TIMEOUT:   ${{ vars.GATEWAY_READY_TIMEOUT || '120' }}
         run: |
@@ -76,10 +109,9 @@ jobs:
 
           echo "Waiting up to ${READY_TIMEOUT}s for ${GATEWAY_URL}/health ..."
           ELAPSED=0
-          until [[ "$( curl -sf -o /dev/null -w "%{http_code}" \
-                        $AUTH_HEADER \
-                        --max-time 5 \
-                        "${GATEWAY_URL}/health" 2>/dev/null )" == "200" ]]; do
+          until [[ "$(curl -sf -o /dev/null -w "%{http_code}" \
+                       $AUTH_HEADER --max-time 5 \
+                       "${GATEWAY_URL}/health" 2>/dev/null)" == "200" ]]; do
             if [[ $ELAPSED -ge $READY_TIMEOUT ]]; then
               echo "::error::Gateway did not become healthy within ${READY_TIMEOUT}s"
               exit 1
@@ -92,19 +124,28 @@ jobs:
 
       - name: Run smoke tests
         env:
-          GATEWAY_URL:      ${{ inputs.gateway_url    || vars.GATEWAY_URL }}
-          AUDIO_URL:        ${{ inputs.audio_url      || vars.AUDIO_URL }}
+          GATEWAY_URL:      ${{ inputs.gateway_url   || vars.GATEWAY_URL }}
+          AUDIO_URL:        ${{ inputs.audio_url     || vars.AUDIO_URL }}
           GATEWAY_API_KEY:  ${{ secrets.GATEWAY_API_KEY }}
-          WHISPER_MODEL:    ${{ vars.WHISPER_MODEL    || 'whisper-large-v3' }}
-          RERANK_MODEL:     ${{ vars.RERANK_MODEL     || 'bge-reranker-v2-m3' }}
-          RERANK_ENDPOINT:  ${{ vars.RERANK_ENDPOINT  || '/v1/rerank' }}
-          POLL_TIMEOUT:     ${{ inputs.poll_timeout   || '300' }}
+          WHISPER_MODEL:    ${{ vars.WHISPER_MODEL   || 'whisper-large-v3' }}
+          RERANK_MODEL:     ${{ vars.RERANK_MODEL    || 'bge-reranker-v2-m3' }}
+          RERANK_ENDPOINT:  ${{ vars.RERANK_ENDPOINT || '/v1/rerank' }}
+          POLL_TIMEOUT:     ${{ inputs.poll_timeout  || '300' }}
           SYNC_TIMEOUT:     "300"
-          SKIP_WHISPER:     ${{ inputs.skip_whisper   || '0' }}
-          SKIP_RERANK:      ${{ inputs.skip_rerank    || '0' }}
+          SKIP_WHISPER:     ${{ inputs.skip_whisper  || '0' }}
+          SKIP_RERANK:      ${{ inputs.skip_rerank   || '0' }}
         run: bash tests/smoke/smoke.sh
 
-      - name: Notify on failure
-        if: failure()
+      # Post a summary comment on the PR when triggered by /smoke-test.
+      - name: Comment result on PR
+        if: always() && github.event_name == 'issue_comment'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "::error::Smoke tests failed — check the gateway at ${GATEWAY_URL}"
+          if [[ "${{ job.status }}" == "success" ]]; then
+            ICON="✅"; MSG="Smoke tests **passed**."
+          else
+            ICON="❌"; MSG="Smoke tests **failed** — [see logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."
+          fi
+          gh pr comment ${{ github.event.issue.number }} \
+            --body "${ICON} ${MSG}"
