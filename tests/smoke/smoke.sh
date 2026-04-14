@@ -7,26 +7,28 @@
 #   bash tests/smoke/smoke.sh
 #
 # Required env vars:
-#   GATEWAY_URL      Base URL of the gateway (no trailing slash)
-#   AUDIO_URL        URL of a short speech audio file (.mp3 / .wav / .m4a)
+#   GATEWAY_URL       Base URL of the gateway (no trailing slash)
+#   AUDIO_URL         URL of a short speech audio file (.mp3 / .wav / .m4a)
 #
 # Optional env vars:
-#   GATEWAY_API_KEY  API key — sent as the 'apikey' header on every request
-#   WHISPER_MODEL    Model name for Whisper (default: whisper-large-v3)
-#   RERANK_MODEL     Model name for the reranker (default: bge-reranker-v2-m3)
-#   RERANK_ENDPOINT  Rerank path (default: /v1/rerank)
-#   POLL_TIMEOUT     Max seconds to wait for an async job (default: 300)
-#   POLL_INTERVAL    Seconds between async polls (default: 5)
-#   SYNC_TIMEOUT     Max seconds for the synchronous transcription request (default: 300)
-#   SKIP_WHISPER     Set to 1 to skip both Whisper tests
-#   SKIP_RERANK      Set to 1 to skip the Rerank test
+#   WHISPER_API_KEY   API key for audio endpoints (sent as 'apikey' header)
+#   RERANK_API_KEY    API key for rerank endpoint  (sent as 'apikey' header)
+#   WHISPER_MODEL     Model name for Whisper (default: whisper-large-v3)
+#   RERANK_MODEL      Model name for the reranker (default: bge-reranker-v2-m3)
+#   RERANK_ENDPOINT   Rerank path (default: /v1/rerank)
+#   POLL_TIMEOUT      Max seconds to wait for an async job (default: 300)
+#   POLL_INTERVAL     Seconds between async polls (default: 5)
+#   SYNC_TIMEOUT      Max seconds for the synchronous transcription request (default: 300)
+#   SKIP_WHISPER      Set to 1 to skip both Whisper tests
+#   SKIP_RERANK       Set to 1 to skip the Rerank test
 
 set -euo pipefail
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 GATEWAY_URL="${GATEWAY_URL:?GATEWAY_URL is required (e.g. https://api.kevent.example.com)}"
 AUDIO_URL="${AUDIO_URL:?AUDIO_URL is required (URL of a short .mp3 / .wav speech file)}"
-GATEWAY_API_KEY="${GATEWAY_API_KEY:-}"
+WHISPER_API_KEY="${WHISPER_API_KEY:-}"
+RERANK_API_KEY="${RERANK_API_KEY:-}"
 WHISPER_MODEL="${WHISPER_MODEL:-whisper-large-v3}"
 RERANK_MODEL="${RERANK_MODEL:-bge-reranker-v2-m3}"
 RERANK_ENDPOINT="${RERANK_ENDPOINT:-/v1/rerank}"
@@ -50,19 +52,25 @@ pass() { PASS=$((PASS+1));  printf "  ${GREEN}PASS${NC} %s\n" "$1"; }
 fail() { FAIL=$((FAIL+1));  printf "  ${RED}FAIL${NC} %s\n" "$1"; ERRORS+=("$1"); }
 skip() { SKIP=$((SKIP+1));  printf "  ${YELLOW}SKIP${NC} %s\n" "$1"; }
 
-# Base curl args shared by all requests.
-# Populated after API key is known so the array is built once.
-CURL=()
-build_curl_base() {
-  CURL=(-sf --max-time 30 -H "Accept: application/json")
-  [[ -n "$GATEWAY_API_KEY" ]] && CURL+=(-H "apikey: ${GATEWAY_API_KEY}")
-}
-build_curl_base
+# Per-service curl base args (auth header differs between Whisper and Rerank).
+CURL_BASE=(-sf --max-time 30 -H "Accept: application/json")
 
-# HTTP status-only request (no body). Usage: http_status GET /path
-http_status() {
-  local method="$1" path="$2"
-  curl "${CURL[@]}" -o /dev/null -w "%{http_code}" -X "$method" "${GATEWAY_URL}${path}" 2>/dev/null || echo "000"
+curl_whisper() {
+  local args=("${CURL_BASE[@]}")
+  [[ -n "$WHISPER_API_KEY" ]] && args+=(-H "apikey: ${WHISPER_API_KEY}")
+  curl "${args[@]}" "$@"
+}
+
+curl_rerank() {
+  local args=("${CURL_BASE[@]}")
+  [[ -n "$RERANK_API_KEY" ]] && args+=(-H "apikey: ${RERANK_API_KEY}")
+  curl "${args[@]}" "$@"
+}
+
+# Health check has no auth requirement — use bare base args.
+http_health_status() {
+  curl "${CURL_BASE[@]}" -o /dev/null -w "%{http_code}" \
+    "${GATEWAY_URL}/health" 2>/dev/null || echo "000"
 }
 
 # ── Download audio file once ───────────────────────────────────────────────────
@@ -86,7 +94,7 @@ fi
 log ""
 log "=== 1/4  Health check ==="
 
-STATUS=$(http_status GET /health)
+STATUS=$(http_health_status)
 if [[ "$STATUS" == "200" ]]; then
   pass "GET /health → 200"
 else
@@ -102,7 +110,7 @@ log "=== 2/4  Whisper async (POST /jobs/audio) ==="
 if [[ "$SKIP_WHISPER" == "1" ]]; then
   skip "SKIP_WHISPER=1"
 else
-  SUBMIT_BODY=$(curl "${CURL[@]}" \
+  SUBMIT_BODY=$(curl_whisper \
     -X POST \
     -F "file=@${AUDIO_FILE};type=audio/mpeg" \
     -F "model=${WHISPER_MODEL}" \
@@ -120,7 +128,7 @@ else
     ELAPSED=0
     JOB_STATUS=""
     while [[ $ELAPSED -lt $POLL_TIMEOUT ]]; do
-      POLL_BODY=$(curl "${CURL[@]}" "${GATEWAY_URL}/jobs/audio/${JOB_ID}" 2>&1) || POLL_BODY=""
+      POLL_BODY=$(curl_whisper "${GATEWAY_URL}/jobs/audio/${JOB_ID}" 2>&1) || POLL_BODY=""
       JOB_STATUS=$(echo "$POLL_BODY" | jq -r '.status // empty' 2>/dev/null || true)
 
       case "$JOB_STATUS" in
@@ -161,7 +169,7 @@ log "=== 3/4  Whisper sync (POST /v1/audio/transcriptions) ==="
 if [[ "$SKIP_WHISPER" == "1" ]]; then
   skip "SKIP_WHISPER=1"
 else
-  SYNC_BODY=$(curl "${CURL[@]}" \
+  SYNC_BODY=$(curl_whisper \
     --max-time "$SYNC_TIMEOUT" \
     -X POST \
     -F "file=@${AUDIO_FILE};type=audio/mpeg" \
@@ -202,7 +210,7 @@ else
     ]' \
     '{query: $q, model: $m, documents: $docs, top_n: 3, return_documents: true}')
 
-  RERANK_BODY=$(curl "${CURL[@]}" \
+  RERANK_BODY=$(curl_rerank \
     -X POST \
     -H "Content-Type: application/json" \
     -d "$RERANK_PAYLOAD" \
