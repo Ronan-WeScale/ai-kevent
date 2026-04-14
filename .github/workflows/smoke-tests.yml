@@ -1,11 +1,14 @@
 name: Smoke tests — dev
 
-# Triggered manually or on a daily schedule.
+# Triggered automatically after "Deploy — dev" succeeds (image pushed to :dev or :rc-<sha>).
+# Also triggerable manually via workflow_dispatch for ad-hoc runs.
+#
 # Requires the following to be configured on the repository / environment:
 #
 #   Variables  (Settings → Environments → dev → Variables)
 #     GATEWAY_URL        https://api.kevent-dev.example.com
 #     AUDIO_URL          URL of a short speech audio file (.mp3 / .wav / .m4a)
+#     GATEWAY_READY_TIMEOUT  seconds to wait for the gateway to be ready after deploy (default: 120)
 #     WHISPER_MODEL      whisper-large-v3          (optional, this is the default)
 #     RERANK_MODEL       bge-reranker-v2-m3        (optional, this is the default)
 #     RERANK_ENDPOINT    /v1/rerank                (optional, this is the default)
@@ -14,10 +17,13 @@ name: Smoke tests — dev
 #     GATEWAY_API_KEY    API key forwarded as the 'apikey' header (leave empty if no auth)
 
 on:
-  schedule:
-    # Every day at 06:00 UTC (before business hours)
-    - cron: "0 6 * * *"
+  # Primary trigger: runs as soon as the dev deploy finishes successfully.
+  workflow_run:
+    workflows: ["Deploy — dev (hors-prod)"]
+    types: [completed]
 
+  # Manual trigger: useful to re-run tests without a new deploy, or to test
+  # a specific gateway URL / audio file.
   workflow_dispatch:
     inputs:
       gateway_url:
@@ -44,16 +50,48 @@ jobs:
     name: Smoke tests
     runs-on: ubuntu-latest
     environment: dev
+    # Skip when triggered via workflow_run if the upstream deploy failed.
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
 
     steps:
       - uses: actions/checkout@v4
+        # workflow_run provides the SHA of the triggering commit — check out
+        # the same ref so smoke.sh matches the deployed code.
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Install jq
         run: sudo apt-get install -y --no-install-recommends jq
 
+      # The deploy workflow pushes a new image and the cluster rolls out the pod.
+      # Wait until GET /health returns 200 before running the functional tests.
+      - name: Wait for gateway to be ready
+        env:
+          GATEWAY_URL:     ${{ inputs.gateway_url || vars.GATEWAY_URL }}
+          GATEWAY_API_KEY: ${{ secrets.GATEWAY_API_KEY }}
+          READY_TIMEOUT:   ${{ vars.GATEWAY_READY_TIMEOUT || '120' }}
+        run: |
+          AUTH_HEADER=""
+          [[ -n "$GATEWAY_API_KEY" ]] && AUTH_HEADER="-H apikey:${GATEWAY_API_KEY}"
+
+          echo "Waiting up to ${READY_TIMEOUT}s for ${GATEWAY_URL}/health ..."
+          ELAPSED=0
+          until [[ "$( curl -sf -o /dev/null -w "%{http_code}" \
+                        $AUTH_HEADER \
+                        --max-time 5 \
+                        "${GATEWAY_URL}/health" 2>/dev/null )" == "200" ]]; do
+            if [[ $ELAPSED -ge $READY_TIMEOUT ]]; then
+              echo "::error::Gateway did not become healthy within ${READY_TIMEOUT}s"
+              exit 1
+            fi
+            echo "  ... not ready yet (${ELAPSED}s elapsed)"
+            sleep 5
+            ELAPSED=$((ELAPSED + 5))
+          done
+          echo "Gateway is ready (${ELAPSED}s)"
+
       - name: Run smoke tests
         env:
-          # env vars win; workflow_dispatch inputs override env vars when provided
           GATEWAY_URL:      ${{ inputs.gateway_url    || vars.GATEWAY_URL }}
           AUDIO_URL:        ${{ inputs.audio_url      || vars.AUDIO_URL }}
           GATEWAY_API_KEY:  ${{ secrets.GATEWAY_API_KEY }}
