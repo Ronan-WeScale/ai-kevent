@@ -602,6 +602,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#backend-authentication-inference_headers" class="md-nav__link">
+    <span class="md-ellipsis">
+      Backend authentication (inference_headers)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#hot-reload" class="md-nav__link">
     <span class="md-ellipsis">
       Hot reload
@@ -1175,6 +1184,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#backend-authentication-inference_headers" class="md-nav__link">
+    <span class="md-ellipsis">
+      Backend authentication (inference_headers)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#hot-reload" class="md-nav__link">
     <span class="md-ellipsis">
       Hot reload
@@ -1227,6 +1245,10 @@
 </span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="w">    </span><span class="c1"># File validation</span>
 </span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a><span class="w">    </span><span class="nt">accepted_exts</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;.mp3&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;.wav&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;.m4a&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;.ogg&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;.flac&quot;</span><span class="p p-Indicator">]</span>
 </span><span id="__span-0-22"><a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a><span class="w">    </span><span class="nt">max_file_size_mb</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">500</span>
+</span><span id="__span-0-23"><a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>
+</span><span id="__span-0-24"><a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a><span class="w">    </span><span class="c1"># Backend authentication — sync-direct only (optional)</span>
+</span><span id="__span-0-25"><a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a><span class="w">    </span><span class="nt">inference_headers</span><span class="p">:</span>
+</span><span id="__span-0-26"><a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a><span class="w">      </span><span class="nt">Authorization</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Bearer</span><span class="nv"> </span><span class="s">${WHISPER_API_KEY}&quot;</span>
 </span></code></pre></div>
 <h2 id="model-resolution-order">Model resolution order<a class="headerlink" href="#model-resolution-order" title="Permanent link">&para;</a></h2>
 <p>When a request omits the <code>model</code> field:</p>
@@ -1270,6 +1292,22 @@
 </span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;/v2/models/{model}/infer&quot;</span>
 </span></code></pre></div>
 <p>The gateway extracts the model name from the URL segment and routes accordingly. No <code>model</code> field is required in the request body.</p>
+<h2 id="backend-authentication-inference_headers">Backend authentication (<code>inference_headers</code>)<a class="headerlink" href="#backend-authentication-inference_headers" title="Permanent link">&para;</a></h2>
+<p>For sync-direct services whose backend requires authentication, add <code>inference_headers</code>:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">reranker</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;bge-reranker-v2-m3&quot;</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span><span class="nt">operations</span><span class="p">:</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">    </span><span class="nt">rerank</span><span class="p">:</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;/v1/rerank&quot;</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">  </span><span class="nt">inference_url</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;http://kevent-reranker-predictor.svc.cluster.local&quot;</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">  </span><span class="nt">inference_headers</span><span class="p">:</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">    </span><span class="nt">Authorization</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Bearer</span><span class="nv"> </span><span class="s">${RERANKER_API_KEY}&quot;</span>
+</span></code></pre></div>
+<p>Headers are injected on every outgoing request to the backend. Values support <code>${VAR}</code> expansion. Config headers override client headers with the same name.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p><code>inference_headers</code> only applies to <strong>sync-direct</strong> proxy. Async and sync-over-Kafka jobs run via the relay sidecar (local <code>127.0.0.1:9000</code>) and are unaffected.</p>
+</div>
 <h2 id="hot-reload">Hot reload<a class="headerlink" href="#hot-reload" title="Permanent link">&para;</a></h2>
 <p>The service registry is reloaded atomically via <code>POST /-/reload</code>. The HTTP router is swapped, Kafka consumers are reconciled (stopped for removed topics, started for new ones). Infrastructure (S3, Redis, Kafka connection) is not re-initialised.</p>
 

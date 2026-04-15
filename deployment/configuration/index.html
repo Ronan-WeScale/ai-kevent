@@ -765,6 +765,15 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#inference_headers" class="md-nav__link">
+    <span class="md-ellipsis">
+      inference_headers
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1265,6 +1274,15 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#inference_headers" class="md-nav__link">
+    <span class="md-ellipsis">
+      inference_headers
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1384,11 +1402,16 @@
 </span><span id="__span-6-21"><a id="__codelineno-6-21" name="__codelineno-6-21" href="#__codelineno-6-21"></a><span class="w">    </span><span class="nt">accepted_exts</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;.mp3&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;.wav&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;.m4a&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;.ogg&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;.flac&quot;</span><span class="p p-Indicator">]</span>
 </span><span id="__span-6-22"><a id="__codelineno-6-22" name="__codelineno-6-22" href="#__codelineno-6-22"></a><span class="w">    </span><span class="nt">max_file_size_mb</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">500</span>
 </span><span id="__span-6-23"><a id="__codelineno-6-23" name="__codelineno-6-23" href="#__codelineno-6-23"></a>
-</span><span id="__span-6-24"><a id="__codelineno-6-24" name="__codelineno-6-24" href="#__codelineno-6-24"></a><span class="w">    </span><span class="c1"># Swagger spec (optional)</span>
-</span><span id="__span-6-25"><a id="__codelineno-6-25" name="__codelineno-6-25" href="#__codelineno-6-25"></a><span class="w">    </span><span class="nt">swagger_url</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;https://example.com/openapi.json&quot;</span>
-</span><span id="__span-6-26"><a id="__codelineno-6-26" name="__codelineno-6-26" href="#__codelineno-6-26"></a><span class="w">    </span><span class="nt">swagger_headers</span><span class="p">:</span>
-</span><span id="__span-6-27"><a id="__codelineno-6-27" name="__codelineno-6-27" href="#__codelineno-6-27"></a><span class="w">      </span><span class="nt">Authorization</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Bearer</span><span class="nv"> </span><span class="s">${TOKEN}&quot;</span>
-</span><span id="__span-6-28"><a id="__codelineno-6-28" name="__codelineno-6-28" href="#__codelineno-6-28"></a><span class="w">      </span><span class="nt">Accept</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;application/octet-stream&quot;</span>
+</span><span id="__span-6-24"><a id="__codelineno-6-24" name="__codelineno-6-24" href="#__codelineno-6-24"></a><span class="w">    </span><span class="c1"># Backend authentication (sync-direct only, optional)</span>
+</span><span id="__span-6-25"><a id="__codelineno-6-25" name="__codelineno-6-25" href="#__codelineno-6-25"></a><span class="w">    </span><span class="nt">inference_headers</span><span class="p">:</span>
+</span><span id="__span-6-26"><a id="__codelineno-6-26" name="__codelineno-6-26" href="#__codelineno-6-26"></a><span class="w">      </span><span class="nt">Authorization</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Bearer</span><span class="nv"> </span><span class="s">${RERANKER_API_KEY}&quot;</span>
+</span><span id="__span-6-27"><a id="__codelineno-6-27" name="__codelineno-6-27" href="#__codelineno-6-27"></a><span class="w">      </span><span class="nt">X-Api-Key</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;${BACKEND_KEY}&quot;</span>
+</span><span id="__span-6-28"><a id="__codelineno-6-28" name="__codelineno-6-28" href="#__codelineno-6-28"></a>
+</span><span id="__span-6-29"><a id="__codelineno-6-29" name="__codelineno-6-29" href="#__codelineno-6-29"></a><span class="w">    </span><span class="c1"># Swagger spec (optional)</span>
+</span><span id="__span-6-30"><a id="__codelineno-6-30" name="__codelineno-6-30" href="#__codelineno-6-30"></a><span class="w">    </span><span class="nt">swagger_url</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;https://example.com/openapi.json&quot;</span>
+</span><span id="__span-6-31"><a id="__codelineno-6-31" name="__codelineno-6-31" href="#__codelineno-6-31"></a><span class="w">    </span><span class="nt">swagger_headers</span><span class="p">:</span>
+</span><span id="__span-6-32"><a id="__codelineno-6-32" name="__codelineno-6-32" href="#__codelineno-6-32"></a><span class="w">      </span><span class="nt">Authorization</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Bearer</span><span class="nv"> </span><span class="s">${TOKEN}&quot;</span>
+</span><span id="__span-6-33"><a id="__codelineno-6-33" name="__codelineno-6-33" href="#__codelineno-6-33"></a><span class="w">      </span><span class="nt">Accept</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;application/octet-stream&quot;</span>
 </span></code></pre></div>
 <h3 id="field-reference">Field reference<a class="headerlink" href="#field-reference" title="Permanent link">&para;</a></h3>
 <table>
@@ -1468,6 +1491,12 @@
 <td>Max upload size in MB</td>
 </tr>
 <tr>
+<td><code>inference_headers</code></td>
+<td>no</td>
+<td><code>{}</code></td>
+<td>HTTP headers injected on every sync-direct proxy request</td>
+</tr>
+<tr>
 <td><code>swagger_url</code></td>
 <td>no</td>
 <td><code>""</code></td>
@@ -1481,6 +1510,18 @@
 </tr>
 </tbody>
 </table>
+<h3 id="inference_headers"><code>inference_headers</code><a class="headerlink" href="#inference_headers" title="Permanent link">&para;</a></h3>
+<p>Arbitrary HTTP headers injected on every request forwarded to the inference backend. Only applies to the <strong>sync-direct proxy</strong> flow (JSON requests and multipart without <code>sync_topic</code>). Has no effect on async or sync-over-Kafka jobs.</p>
+<ul>
+<li>Header values support <code>${VAR}</code> / <code>${VAR:-default}</code> env expansion — store credentials in environment variables, not in plain config.</li>
+<li>Config headers <strong>override</strong> any header with the same name sent by the client.</li>
+</ul>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="c1"># Typical use cases:</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="nt">inference_headers</span><span class="p">:</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span><span class="nt">Authorization</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Bearer</span><span class="nv"> </span><span class="s">${RERANKER_API_KEY}&quot;</span><span class="w">   </span><span class="c1"># Bearer token</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">  </span><span class="nt">X-Api-Key</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;${BACKEND_KEY}&quot;</span><span class="w">                   </span><span class="c1"># custom API key header</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">  </span><span class="nt">apikey</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;${BACKEND_KEY}&quot;</span><span class="w">                      </span><span class="c1"># APISIX-style key</span>
+</span></code></pre></div>
 <h2 id="hot-reload">Hot reload<a class="headerlink" href="#hot-reload" title="Permanent link">&para;</a></h2>
 <p><code>POST /-/reload</code> re-reads the config file and atomically swaps the router. Kafka consumers are reconciled (stopped for removed topics, started for new ones). S3, Redis, and Kafka connections are not re-initialised.</p>
 <p>The <code>configmap-reload</code> sidecar can trigger this automatically on ConfigMap changes.</p>
