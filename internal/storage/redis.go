@@ -44,6 +44,12 @@ func (r *RedisClient) Close() error {
 	return r.client.Close()
 }
 
+// Client returns the underlying *redis.Client for callers that need direct access
+// (e.g. rate limiting via Lua scripts).
+func (r *RedisClient) Client() *redis.Client {
+	return r.client
+}
+
 func jobKey(id string) string        { return "job:" + id }
 func consumerKey(name string) string { return "consumer:" + name + ":jobs" }
 

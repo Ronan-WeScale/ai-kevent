@@ -81,4 +81,29 @@ var (
 		Name: "kevent_jobs_by_consumer_total",
 		Help: "Total number of jobs submitted per consumer.",
 	}, []string{"mode", "service_type", "model", "consumer"})
+
+	// RateLimitRequestsTotal counts rate-limit evaluations, labelled by
+	// service_type, user_type (from the configurable user_type_header), and result
+	// ("allowed" or "rejected"). Consumer name is intentionally omitted to keep
+	// cardinality low; use RateLimitConsumerHitsTotal for per-consumer analysis.
+	// Only populated when rate_limits is configured.
+	RateLimitRequestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "kevent_ratelimit_requests_total",
+		Help: "Total number of requests evaluated by the rate limiter, by outcome.",
+	}, []string{"service_type", "user_type", "result"})
+
+	// RateLimitConsumerHitsTotal counts rate-limit evaluations per consumer,
+	// enabling `count by (user_type) (group by (...) (...))` in PromQL to get
+	// the number of distinct consumers per user_type.
+	// Only populated when both rate_limits and consumer_header are configured.
+	RateLimitConsumerHitsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "kevent_ratelimit_consumer_hits_total",
+		Help: "Total rate-limit evaluations per consumer (enables distinct consumer count per user_type via PromQL group).",
+	}, []string{"service_type", "user_type", "consumer"})
+
+	// RateLimitErrorsTotal counts Redis errors during rate-limit evaluation (fail-open).
+	RateLimitErrorsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "kevent_ratelimit_errors_total",
+		Help: "Total number of Redis errors during rate-limit checks (requests are allowed on error).",
+	}, []string{"service_type"})
 )

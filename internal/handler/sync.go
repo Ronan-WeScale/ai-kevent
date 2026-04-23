@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 
 	"kevent/gateway/internal/metrics"
 	"kevent/gateway/internal/model"
+	"kevent/gateway/internal/ratelimit"
 	"kevent/gateway/internal/service"
 	"kevent/gateway/internal/storage"
 )
@@ -64,7 +66,8 @@ type SyncHandler struct {
 	redis          jobStore
 	producer       eventProducer
 	httpClient     *http.Client
-	consumerHeader string // HTTP header identifying the API consumer (e.g. "X-Consumer-Username")
+	consumerHeader string          // HTTP header identifying the API consumer (e.g. "X-Consumer-Username")
+	rateLimiter    ratelimit.Checker // nil = no rate limiting
 }
 
 func NewSyncHandler(
@@ -73,6 +76,7 @@ func NewSyncHandler(
 	redis jobStore,
 	producer eventProducer,
 	consumerHeader string,
+	rateLimiter ratelimit.Checker,
 ) *SyncHandler {
 	return &SyncHandler{
 		registry:       registry,
@@ -80,6 +84,7 @@ func NewSyncHandler(
 		redis:          redis,
 		producer:       producer,
 		consumerHeader: consumerHeader,
+		rateLimiter:    rateLimiter,
 		// Generous timeout for direct-proxy path; Knative timeoutSeconds is the
 		// real ceiling for the sync-over-Kafka path (controlled by context).
 		httpClient: &http.Client{Timeout: 15 * time.Minute},
@@ -123,6 +128,17 @@ func (h *SyncHandler) handleMultipart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.rateLimiter != nil {
+		allowed, retryAfter, err := h.rateLimiter.Check(r.Context(), r, def.Type)
+		if err != nil {
+			slog.ErrorContext(r.Context(), "rate limit check failed", "error", err)
+		} else if !allowed {
+			w.Header().Set("Retry-After", strconv.Itoa(int(retryAfter.Seconds())))
+			writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
+			return
+		}
+	}
+
 	if def.SyncTopic != "" {
 		h.handleMultipartViaKafka(w, r, def)
 	} else {
@@ -157,6 +173,17 @@ func (h *SyncHandler) handleJSON(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+
+	if h.rateLimiter != nil {
+		allowed, retryAfter, err := h.rateLimiter.Check(r.Context(), r, def.Type)
+		if err != nil {
+			slog.ErrorContext(r.Context(), "rate limit check failed", "error", err)
+		} else if !allowed {
+			w.Header().Set("Retry-After", strconv.Itoa(int(retryAfter.Seconds())))
+			writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
+			return
+		}
 	}
 
 	// JSON requests always use direct proxy (no file to route through Kafka).

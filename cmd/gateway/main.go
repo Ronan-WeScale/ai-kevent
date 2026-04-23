@@ -19,6 +19,7 @@ import (
 	"kevent/gateway/internal/handler"
 	"kevent/gateway/internal/kafka"
 	_ "kevent/gateway/internal/metrics" // register Prometheus metrics
+	"kevent/gateway/internal/ratelimit"
 	"kevent/gateway/internal/service"
 	"kevent/gateway/internal/storage"
 )
@@ -66,8 +67,9 @@ func buildRouter(
 	producer *kafka.Producer,
 	logger *slog.Logger,
 	reloadFn func() error,
+	rl ratelimit.Checker,
 ) *chi.Mux {
-	jobHandler := handler.NewJobHandler(reg, s3Client, redisClient, producer, cfg.Server.PriorityHeader, cfg.Server.ConsumerHeader)
+	jobHandler := handler.NewJobHandler(reg, s3Client, redisClient, producer, cfg.Server.PriorityHeader, cfg.Server.ConsumerHeader, rl)
 
 	r := chi.NewRouter()
 	r.Use(chimw.RequestID)
@@ -89,7 +91,7 @@ func buildRouter(
 	r.Post("/-/reload", handler.NewReloadHandler(reloadFn))
 
 	if reg.HasSyncServices() {
-		syncHandler := handler.NewSyncHandler(reg, s3Client, redisClient, producer, cfg.Server.ConsumerHeader)
+		syncHandler := handler.NewSyncHandler(reg, s3Client, redisClient, producer, cfg.Server.ConsumerHeader, rl)
 		r.Get("/v1/models", handler.ListModels(reg))
 		// Register each configured path exactly. Chi handles {model} parameter
 		// patterns natively. Single-segment paths (e.g. /rerank) are reachable
@@ -146,6 +148,12 @@ func main() {
 	}
 	defer redisClient.Close()
 
+	var rl ratelimit.Checker
+	if len(cfg.RateLimits) > 0 {
+		rl = ratelimit.New(redisClient.Client(), cfg.RateLimits, cfg.Server.ConsumerHeader, cfg.Server.UserTypeHeader)
+		slog.Info("rate limiting enabled", "services", len(cfg.RateLimits))
+	}
+
 	// Kafka producer and consumer manager are created whenever brokers are
 	// configured, regardless of the initial service count. This allows hot
 	// reload to add or remove Kafka services without restarting the pod.
@@ -180,7 +188,7 @@ func main() {
 			return err
 		}
 		newReg := service.NewRegistry(newCfg.Services)
-		newRouter := buildRouter(newCfg, newReg, s3Client, redisClient, producer, logger, reloadFn)
+		newRouter := buildRouter(newCfg, newReg, s3Client, redisClient, producer, logger, reloadFn, rl)
 		holder.p.Store(newRouter)
 		if consumerManager != nil {
 			consumerManager.Reconcile(newReg)
@@ -190,7 +198,7 @@ func main() {
 	}
 
 	// ── HTTP router ───────────────────────────────────────────────────────────
-	initialRouter := buildRouter(cfg, initialRegistry, s3Client, redisClient, producer, logger, reloadFn)
+	initialRouter := buildRouter(cfg, initialRegistry, s3Client, redisClient, producer, logger, reloadFn, rl)
 	holder.p.Store(initialRouter)
 
 	// ── Result consumers ──────────────────────────────────────────────────────

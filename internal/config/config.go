@@ -10,12 +10,23 @@ import (
 )
 
 type Config struct {
-	Server     ServerConfig     `yaml:"server"`
-	Kafka      KafkaConfig      `yaml:"kafka"`
-	S3         S3Config         `yaml:"s3"`
-	Redis      RedisConfig      `yaml:"redis"`
-	Services   []ServiceConfig  `yaml:"services"`
-	Encryption EncryptionConfig `yaml:"encryption"`
+	Server     ServerConfig                         `yaml:"server"`
+	Kafka      KafkaConfig                          `yaml:"kafka"`
+	S3         S3Config                             `yaml:"s3"`
+	Redis      RedisConfig                          `yaml:"redis"`
+	Services   []ServiceConfig                      `yaml:"services"`
+	Encryption EncryptionConfig                     `yaml:"encryption"`
+	// RateLimits maps service type → user type → limit.
+	// User type "*" is the fallback applied when the user_type_header is absent
+	// or the specific type has no entry.
+	// Leave empty to disable rate limiting.
+	RateLimits map[string]map[string]RateLimitConfig `yaml:"rate_limits"`
+}
+
+// RateLimitConfig defines the allowed request rate for a (service, user-type) pair.
+type RateLimitConfig struct {
+	Rate   int    `yaml:"rate"`   // max requests per Period
+	Period string `yaml:"period"` // e.g. "1m", "1h", "24h"
 }
 
 type EncryptionConfig struct {
@@ -45,6 +56,12 @@ type ServerConfig struct {
 	//     present, the job's consumer_name must match or 404 is returned
 	// Leave empty in deployments without upstream authentication.
 	ConsumerHeader string `yaml:"consumer_header"`
+	// UserTypeHeader is the HTTP header used to identify the user type for rate
+	// limiting. Typically injected by OPA after policy evaluation
+	// (e.g. "X-User-Type"). The value is matched against rate_limits[type][user_type];
+	// "*" is used as fallback when the header is absent or the type has no entry.
+	// Leave empty to apply only the "*" fallback (no per-type differentiation).
+	UserTypeHeader string `yaml:"user_type_header"`
 }
 
 type KafkaConfig struct {
