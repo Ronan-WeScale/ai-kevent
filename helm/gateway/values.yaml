@@ -191,6 +191,8 @@ alerting:
       relayJobFailureRateCritical: 0.30
       # Durée d'inférence p95 en secondes avant alerte slow
       relayInferenceP95Seconds: 120
+      # Taux de rejet rate limit (0.20 = 20% des requêtes rejetées sur un service)
+      rateLimitRejectionRateWarning: 0.20
     # Règles supplémentaires ajoutées au groupe kevent-relay.
     extraRules: []
     # Exemple :
