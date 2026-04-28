@@ -57,6 +57,9 @@ jobs:
     name: Smoke tests
     runs-on: actions-runner-controller
     environment: dev
+    permissions:
+      issues: write        # reactions on issue comments + gh pr comment
+      pull-requests: write # gh pr comment fallback path
 
     # ── Guard: skip if the upstream conditions are not met ────────────────────
     #
