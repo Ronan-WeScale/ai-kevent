@@ -10,12 +10,13 @@ import (
 )
 
 type Config struct {
-	Server     ServerConfig                         `yaml:"server"`
-	Kafka      KafkaConfig                          `yaml:"kafka"`
-	S3         S3Config                             `yaml:"s3"`
-	Redis      RedisConfig                          `yaml:"redis"`
-	Services   []ServiceConfig                      `yaml:"services"`
-	Encryption EncryptionConfig                     `yaml:"encryption"`
+	Server     ServerConfig                          `yaml:"server"`
+	Kafka      KafkaConfig                           `yaml:"kafka"`
+	S3         S3Config                              `yaml:"s3"`
+	Redis      RedisConfig                           `yaml:"redis"`
+	Services   []ServiceConfig                       `yaml:"services"`
+	Encryption EncryptionConfig                      `yaml:"encryption"`
+	Metrics    MetricsConfig                         `yaml:"metrics"`
 	// RateLimits maps service type → user type → limit.
 	// User type "*" is the fallback applied when the user_type_header is absent
 	// or the specific type has no entry.
@@ -27,6 +28,17 @@ type Config struct {
 type RateLimitConfig struct {
 	Rate   int    `yaml:"rate"`   // max requests per Period
 	Period string `yaml:"period"` // e.g. "1m", "1h", "24h"
+}
+
+// MetricsConfig controls optional high-cardinality metric features.
+type MetricsConfig struct {
+	// TopConsumers sets how many top consumers to expose in Prometheus via a
+	// Redis sorted-set backed GaugeVec, refreshed every 60s. 0 = disabled.
+	TopConsumers int `yaml:"top_consumers"`
+	// ConsumerLabels enables direct per-consumer Prometheus labels.
+	// Only suitable for deployments with a small, bounded number of consumers
+	// (< 50). Disabled by default — use TopConsumers for large deployments.
+	ConsumerLabels bool `yaml:"consumer_labels"`
 }
 
 type EncryptionConfig struct {
@@ -56,11 +68,12 @@ type ServerConfig struct {
 	//     present, the job's consumer_name must match or 404 is returned
 	// Leave empty in deployments without upstream authentication.
 	ConsumerHeader string `yaml:"consumer_header"`
-	// UserTypeHeader is the HTTP header used to identify the user type for rate
-	// limiting. Typically injected by OPA after policy evaluation
-	// (e.g. "X-User-Type"). The value is matched against rate_limits[type][user_type];
-	// "*" is used as fallback when the header is absent or the type has no entry.
-	// Leave empty to apply only the "*" fallback (no per-type differentiation).
+	// UserTypeHeader is the HTTP header carrying the consumer type (e.g. "sa" or
+	// "user"), typically set by the APISIX Lua plugin after token introspection
+	// (e.g. "X-User-Type"). Used for rate limiting (matched against
+	// rate_limits[type][user_type]) and for LLM consumer metric labelling.
+	// "*" is the fallback when the header is absent. Leave empty to disable
+	// per-type differentiation.
 	UserTypeHeader string `yaml:"user_type_header"`
 }
 
@@ -149,6 +162,18 @@ type ServiceConfig struct {
 	//     Authorization: "Bearer ${RERANKER_API_KEY}"
 	//     X-Api-Key: "${BACKEND_KEY}"
 	InferenceHeaders map[string]string `yaml:"inference_headers"`
+	// BackendModel is the real model name sent to the backend. Allows clients to use
+	// a short alias (model field) while the gateway rewrites it to the backend's
+	// expected identifier (e.g. "meta-llama/Meta-Llama-3-8B-Instruct" for vLLM).
+	// Only applied when Provider is set. Empty means the alias is forwarded as-is.
+	BackendModel string `yaml:"backend_model"`
+	// Provider selects the LLM backend protocol. When set, JSON requests are routed
+	// through the LLM proxy handler instead of the bare direct proxy.
+	// Valid values: "openai", "anthropic", "ollama", "passthrough". Empty = legacy direct proxy.
+	Provider string `yaml:"provider"`
+	// ResponseCacheTTL is the TTL in seconds for caching LLM responses in Redis.
+	// 0 = caching disabled. Only applied when Provider is set.
+	ResponseCacheTTL int `yaml:"response_cache_ttl"`
 }
 
 // Load reads and validates the YAML config file at path.
@@ -245,6 +270,15 @@ func (c *Config) validate() error {
 	}
 	if needsKafka && len(c.Kafka.Brokers) == 0 {
 		return fmt.Errorf("kafka.brokers is required when services use Kafka topics")
+	}
+	validProviders := map[string]bool{"openai": true, "anthropic": true, "ollama": true, "passthrough": true}
+	for _, svc := range c.Services {
+		if svc.Provider != "" && !validProviders[svc.Provider] {
+			return fmt.Errorf("service %q: unknown provider %q (valid: openai, anthropic, ollama, passthrough)", svc.Type, svc.Provider)
+		}
+		if svc.ResponseCacheTTL < 0 {
+			return fmt.Errorf("service %q: response_cache_ttl must be >= 0", svc.Type)
+		}
 	}
 	return nil
 }

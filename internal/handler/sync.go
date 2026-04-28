@@ -18,6 +18,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"kevent/gateway/internal/llmproxy"
 	"kevent/gateway/internal/metrics"
 	"kevent/gateway/internal/model"
 	"kevent/gateway/internal/ratelimit"
@@ -66,8 +67,9 @@ type SyncHandler struct {
 	redis          jobStore
 	producer       eventProducer
 	httpClient     *http.Client
-	consumerHeader string          // HTTP header identifying the API consumer (e.g. "X-Consumer-Username")
+	consumerHeader string            // HTTP header identifying the API consumer (e.g. "X-Consumer-Username")
 	rateLimiter    ratelimit.Checker // nil = no rate limiting
+	llm            *llmproxy.Handler // nil when no LLM services are configured
 }
 
 func NewSyncHandler(
@@ -77,6 +79,7 @@ func NewSyncHandler(
 	producer eventProducer,
 	consumerHeader string,
 	rateLimiter ratelimit.Checker,
+	llm *llmproxy.Handler,
 ) *SyncHandler {
 	return &SyncHandler{
 		registry:       registry,
@@ -85,6 +88,7 @@ func NewSyncHandler(
 		producer:       producer,
 		consumerHeader: consumerHeader,
 		rateLimiter:    rateLimiter,
+		llm:            llm,
 		// Generous timeout for direct-proxy path; Knative timeoutSeconds is the
 		// real ceiling for the sync-over-Kafka path (controlled by context).
 		httpClient: &http.Client{Timeout: 15 * time.Minute},
@@ -186,7 +190,16 @@ func (h *SyncHandler) handleJSON(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// JSON requests always use direct proxy (no file to route through Kafka).
+	// JSON requests: route through LLM proxy if configured, else direct proxy.
+	if h.llm != nil && def.IsLLM() {
+		consumer := ""
+		if h.consumerHeader != "" {
+			consumer = r.Header.Get(h.consumerHeader)
+		}
+		h.llm.ServeJSON(w, r, def, raw, consumer)
+		return
+	}
+
 	h.proxyToInference(w, r, def,
 		io.NopCloser(bytes.NewReader(raw)),
 		r.Header.Get("Content-Type"),

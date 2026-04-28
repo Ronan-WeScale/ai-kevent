@@ -106,4 +106,52 @@ var (
 		Name: "kevent_ratelimit_errors_total",
 		Help: "Total number of Redis errors during rate-limit checks (requests are allowed on error).",
 	}, []string{"service_type"})
+
+	// LLM proxy + cache metrics
+	CacheHitsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "kevent_cache_hits_total",
+		Help: "LLM response cache hits.",
+	}, []string{"service_type", "model"})
+
+	CacheMissesTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "kevent_cache_misses_total",
+		Help: "LLM response cache misses.",
+	}, []string{"service_type", "model"})
+
+	CacheErrorsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "kevent_cache_errors_total",
+		Help: "LLM response cache errors.",
+	}, []string{"service_type", "model", "operation"}) // operation: get|set|key
+
+	// user_type label = "sa" | "user" | "" (when UserTypeHeader not configured).
+	LLMTokensTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "kevent_llm_tokens_total",
+		Help: "Tokens served by LLM requests (prompt+completion, includes cache hits).",
+	}, []string{"service_type", "model", "user_type", "type"})
+
+	LLMRequestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "kevent_llm_requests_total",
+		Help: "Total LLM requests by provider, user_type, and HTTP status.",
+	}, []string{"service_type", "model", "provider", "user_type", "status"})
+
+	LLMRequestDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "kevent_llm_request_duration_seconds",
+		Help:    "End-to-end LLM request latency.",
+		Buckets: []float64{.05, .1, .25, .5, 1, 2, 5, 10, 30, 60, 120},
+	}, []string{"service_type", "model", "provider", "user_type"})
+
+	// LLMTokensPerRequest is a histogram of tokens per request, enabling p50/p95/p99
+	// analysis by user_type. Useful to detect large contexts and capacity planning.
+	LLMTokensPerRequest = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "kevent_llm_tokens_per_request",
+		Help:    "Distribution of total tokens (prompt+completion) per LLM request.",
+		Buckets: []float64{50, 100, 250, 500, 1000, 2000, 5000, 10000, 32000, 100000},
+	}, []string{"service_type", "model", "user_type"})
+
+	// LLMConsumerTokensTop exposes the top-N consumers by token usage, refreshed
+	// periodically from a Redis sorted set. Only populated when metrics.top_consumers > 0.
+	LLMConsumerTokensTop = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "kevent_llm_consumer_tokens_top",
+		Help: "Token usage for top consumers (refreshed from Redis sorted set).",
+	}, []string{"consumer", "user_type", "type"})
 )
