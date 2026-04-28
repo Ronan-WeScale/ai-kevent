@@ -19,6 +19,11 @@ server:
   #   - kevent_jobs_by_consumer_total metric is emitted per consumer
   # Leave empty in deployments without upstream authentication.
   consumer_header: "${CONSUMER_HEADER:-}"
+  # user_type_header: HTTP header injected by OPA to identify the user type for
+  # rate limiting (e.g. "X-User-Type"). Values are matched against rate_limits
+  # entries; "*" is the fallback when the header is absent or unlisted.
+  # Leave empty to apply only the "*" fallback (no per-type differentiation).
+  user_type_header: "${USER_TYPE_HEADER:-}"
 
 kafka:
   brokers:
@@ -87,6 +92,12 @@ services:
     accepted_exts: [".mp3", ".wav", ".m4a", ".ogg", ".flac"]
     max_file_size_mb: 500
 
+  # ── Example: add a second model variant for the same service type ──────────
+  # - type: audio
+  #   model: "whisper-large-v3-turbo"
+  #   ...
+  # Both models share the same rate_limits["audio"] counter per consumer.
+
   - type: ocr
     # Sync / OpenAI-compatible
     model: "llava-v1.6-mistral-7b"
@@ -114,3 +125,27 @@ services:
   #   result_topic: jobs.whisper-large-v3-turbo.results
   #   accepted_exts: [".mp3", ".wav", ".m4a", ".ogg", ".flac"]
   #   max_file_size_mb: 500
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Rate limiting
+# Per-consumer, per-service-type limits keyed by user type (server.user_type_header).
+# Applies to both async (POST /jobs/{type}) and sync (POST /v1/*) endpoints.
+# "*" is the fallback when the header is absent or the type has no specific entry.
+# Multiple models for the same service type share the same counter.
+# Leave this section empty (or omit it) to disable rate limiting.
+# ─────────────────────────────────────────────────────────────────────────────
+# rate_limits:
+#   audio:
+#     premium:
+#       rate: 100
+#       period: 1m
+#     standard:
+#       rate: 20
+#       period: 1m
+#     "*":
+#       rate: 10
+#       period: 1m
+#   ocr:
+#     "*":
+#       rate: 5
+#       period: 1m
