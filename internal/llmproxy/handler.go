@@ -117,23 +117,50 @@ func (h *Handler) ServeJSON(w http.ResponseWriter, r *http.Request, def *service
 		}
 	}
 
-	// ── Forward to provider ───────────────────────────────────────────────────
-	upstreamReq, err := prov.BuildRequest(r.Context(), def, upstreamBody, r.URL.Path)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to build upstream request: "+err.Error())
-		return
+	// ── Forward to provider (with backend retry) ─────────────────────────────
+	backends := service.OrderedBackends(def.Backends)
+	var resp *http.Response
+	var respBody []byte
+	var lastBackendErr string
+	for i, backend := range backends {
+		upstreamReq, reqErr := prov.BuildRequest(r.Context(), def, upstreamBody, r.URL.Path, backend.URL)
+		if reqErr != nil {
+			writeError(w, http.StatusInternalServerError, "failed to build upstream request: "+reqErr.Error())
+			return
+		}
+		var doErr error
+		resp, doErr = h.httpClient.Do(upstreamReq)
+		if doErr != nil {
+			slog.WarnContext(r.Context(), "llm backend error, trying next",
+				"backend_index", i, "url", backend.URL, "error", doErr)
+			metrics.LLMRequestsTotal.WithLabelValues(def.Type, def.Model, def.Provider, userType, "502").Inc()
+			lastBackendErr = doErr.Error()
+			resp = nil
+			continue
+		}
+		if resp.StatusCode >= 500 {
+			slog.WarnContext(r.Context(), "llm backend returned 5xx, trying next",
+				"backend_index", i, "url", backend.URL, "status", resp.StatusCode)
+			metrics.LLMRequestsTotal.WithLabelValues(def.Type, def.Model, def.Provider, userType,
+				strconv.Itoa(resp.StatusCode)).Inc()
+			lastBackendErr = fmt.Sprintf("backend returned %d", resp.StatusCode)
+			_, _ = io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			resp = nil
+			continue
+		}
+		break // success or 4xx — do not retry
 	}
-
-	resp, err := h.httpClient.Do(upstreamReq)
-	if err != nil {
+	if resp == nil {
 		metrics.LLMRequestsTotal.WithLabelValues(def.Type, def.Model, def.Provider, userType, "502").Inc()
-		writeError(w, http.StatusBadGateway, "upstream error: "+err.Error())
+		writeError(w, http.StatusBadGateway, "all backends failed: "+lastBackendErr)
 		return
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
+	var readErr error
+	respBody, readErr = io.ReadAll(resp.Body)
+	if readErr != nil {
 		metrics.LLMRequestsTotal.WithLabelValues(def.Type, def.Model, def.Provider, userType, "502").Inc()
 		writeError(w, http.StatusBadGateway, "failed to read upstream response")
 		return
