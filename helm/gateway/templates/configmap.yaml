@@ -67,6 +67,13 @@ data:
         {{- if .inferenceURL }}
         inference_url:     {{ .inferenceURL | quote }}
         {{- end }}
+        {{- if .backends }}
+        backends:
+          {{- range .backends }}
+          - url:    {{ .url | quote }}
+            weight: {{ .weight }}
+          {{- end }}
+        {{- end }}
         {{- if .inputTopic }}
         input_topic:       {{ .inputTopic }}
         result_topic:      {{ .resultTopic }}
